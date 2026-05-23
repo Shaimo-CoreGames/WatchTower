@@ -1,0 +1,25 @@
+# Python virtual environments
+backend/env/
+env/
+venv/
+ENV/
+
+# Environment secrets and credentials
+.env
+.env.*
+*.env
+
+# Python compilation artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
