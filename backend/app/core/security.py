@@ -3,6 +3,7 @@ from typing import Any, Union
 from jose import jwt
 from passlib.context import CryptContext
 from app.core.config import settings
+from fastapi.security import OAuth2PasswordBearer
 
 # 1. Initialize the password-hashing context using the industry-standard bcrypt algorithm
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -47,3 +48,6 @@ def create_access_token(subject: Union[str, Any], expires_delta: datetime.timede
     # Sign the token using our global secret key and the HMAC-SHA256 protocol
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")

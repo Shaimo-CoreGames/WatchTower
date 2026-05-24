@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from app.core.security import oauth2_scheme
 
 from app.core.database import get_db
 from app.core.security import create_access_token, get_password_hash, verify_password
@@ -46,6 +47,23 @@ async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db))
     
     return new_user
 
+
+from app.core.security import oauth2_scheme  # Make sure to import it!
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Decodes the incoming user access token and fetches their live identity profile.
+    """
+    # 1. For now, this placeholder ensures your routing and Swagger locks work.
+    # 2. Next, you'll add the jwt.decode logic here using the 'token' string.
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Token decoding layer implementation pending."
+    )
 
 @router.post("/login", response_model=Token)
 async def login_for_access_token(

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_router
 from app.core.config import settings
-# Import your engine and Base mapping
+
 from app.core.database import async_engine 
 from app.core.database import Base
 
@@ -15,7 +15,7 @@ async def lifespan(app: FastAPI):
     # --- Startup Logic ---
     # This automatically builds your tables in the 'watchtower' database if they don't exist
     async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(Base.metadata.create_all) # that's why __init__.py imports Base and all models
     
     yield  # The application runs while paused here
     
