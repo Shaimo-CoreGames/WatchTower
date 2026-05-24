@@ -1,22 +1,46 @@
+from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.v1 import api_router
 from app.core.config import settings
+# Import your engine and Base mapping
+from app.core.database import async_engine 
+from app.core.database import Base
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup Logic ---
+    # This automatically builds your tables in the 'watchtower' database if they don't exist
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    yield  # The application runs while paused here
+    
+    # --- Shutdown Logic (Optional) ---
+    # Clear connections or pools here if needed
+    pass
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="High-Performance Distributed Website Uptime & Performance Monitor Backend Engine.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan  # Register the lifespan context manager
 )
 
-# Configure CORS cross-origin rules for our Next.js frontend later
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js standard dev port
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount our modular API Version 1 Router endpoints securely
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root_health_check():
