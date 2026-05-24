@@ -44,4 +44,4 @@ async def get_monitor_metrics(
     records = metrics_result.scalars().all()
     
     # Return chronologically ascending sequence (left-to-right temporal progression)
-    return List(reversed(records))
+    return list(reversed(records))
