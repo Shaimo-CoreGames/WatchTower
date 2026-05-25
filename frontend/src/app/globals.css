@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  /* Registering custom functional colors into Tailwind v4 system */
+  --color-canvas: #f9fafb;
+  --color-card-surface: #ffffff;
+  --color-border-muted: #e5e7eb;
+  
+  --color-text-title: #111827;
+  --color-text-muted: #6b7280;
+  
+  --color-status-success: #16a34a;
+  --color-status-success-bg: #dcfce7;
+  --color-status-warning: #d97706;
+  --color-status-warning-bg: #fef3c7;
+  --color-status-error: #dc2626;
+  --color-status-error-bg: #fee2e2;
+}
+
+/* Base element overrides using our newly declared v4 variables */
+@layer base {
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-text-title);
+    overflow: hidden; /* Lock the main window viewport to support horizontal panel scrolling */
+  }
+}
