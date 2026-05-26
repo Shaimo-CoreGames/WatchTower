@@ -1,44 +1,54 @@
 import time
 import httpx
-import asyncio
+from datetime import datetime
 from app.core.celery_app import celery_app
-from app.core.database import AsyncSessionLocal
+from app.core.database import SyncSessionLocal  # 💡 Using our clean sync factory
 from app.models.health_check import HealthCheck
+from app.models.monitor import Monitor
 
-async def save_health_check_to_db(new_check: HealthCheck):
-    """
-    Asynchronous runner that properly awaits the database transaction 
-    lifecycle using your AsyncSessionLocal factory.
-    """
-    async with AsyncSessionLocal() as db:
-        try:
-            db.add(new_check)
-            await db.commit()  # 💡 Crucial: Await the transaction commit!
-        except Exception as db_err:
-            await db.rollback()  # 💡 Crucial: Await the rollback if something breaks!
-            print(f"❌ Failed to commit monitoring log to DB: {db_err}")
-            raise db_err
-        # The session automatically closes here via the 'async with' context manager
+@celery_app.task(name="tasks.trigger_all_active_monitors")
+def trigger_all_active_monitors():
+    """Queries active monitors synchronously and dispatches individual ping tasks."""
+    db = SyncSessionLocal()
+    try:
+        # Straightforward, blocking query that leaves no trailing async leaks
+        active_monitors = db.query(Monitor).filter(Monitor.is_active == True).all()
+        current_timestamp = int(datetime.utcnow().timestamp())
+        tasks_dispatched = 0
+
+        for monitor in active_monitors:
+            interval = monitor.check_interval if monitor.check_interval else 60
+            
+            # Smart Modulo Check
+            if current_timestamp % interval < 10: 
+                celery_app.send_task("tasks.execute_endpoint_ping", args=[monitor.id, monitor.url])
+                tasks_dispatched += 1
+                
+        if tasks_dispatched > 0:
+            print(f"📡 [Celery Beat] Broadcasted ping tasks for {tasks_dispatched} monitors.")
+            
+    except Exception as e:
+        print(f"❌ Beat failed to orchestrate monitors: {e}")
+    finally:
+        db.close()  # Instantly release connection to the pool
 
 @celery_app.task(name="tasks.execute_endpoint_ping")
 def execute_endpoint_ping(monitor_id: int, target_url: str):
-    """Executes a global networking trace, measures latency, and persists data."""
+    """Executes network pings and writes telemetry logs via blocking sync context."""
     start_time = time.time()
     status_code = None
     error_msg = None
     
     try:
-        # Execute the HTTP request safely inside the worker process
         with httpx.Client(timeout=10.0, follow_redirects=True) as client:
             response = client.get(target_url)
             status_code = response.status_code
     except Exception as e:
         error_msg = str(e)
-        status_code = 500  # Internal fallback server failure code
+        status_code = 500  
         
     latency_ms = int((time.time() - start_time) * 1000)
     
-    # Construct the ORM model instance
     new_check = HealthCheck(
         monitor_id=monitor_id,
         status_code=status_code,
@@ -46,9 +56,13 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         error_message=error_msg
     )
     
-    # Use asyncio.run to safely execute the async database write inside this synchronous worker thread
+    db = SyncSessionLocal()
     try:
-        asyncio.run(save_health_check_to_db(new_check))
-        print(f"✅ Celery Worker Processed Task: {target_url} -> {status_code} ({latency_ms}ms)")
-    except Exception:
-        pass
+        db.add(new_check)
+        db.commit()
+        print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
+    except Exception as db_err:
+        db.rollback()
+        print(f"❌ Database write failure: {db_err}")
+    finally:
+        db.close()  # Instantly release connection to the pool
