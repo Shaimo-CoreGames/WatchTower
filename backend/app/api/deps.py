@@ -25,6 +25,16 @@ async def get_current_user(
     Intercepts an incoming API request, extracts the JWT token from the Authorization header,
     validates its cryptographic signature, and returns the contextual User entity from PostgreSQL.
     """
+    # -------------------------------------------------------------------------
+    # 🚀 TEMPORARY DEV BYPASS: Match frontend 'DEV_BYPASS_TOKEN' layout rules
+    # -------------------------------------------------------------------------
+    if token == "DEV_BYPASS_TOKEN":
+        user_res = await db.execute(select(User).limit(1))
+        bypass_user = user_res.scalars().first()
+        if bypass_user:
+            return bypass_user
+    # -------------------------------------------------------------------------
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials. Please log in again.",

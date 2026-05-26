@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery,useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "./useApi";
 
 export interface MonitorData {
@@ -44,5 +44,23 @@ export function useMonitorAnalytics(monitorId: number | null) {
     },
     enabled: !!monitorId,
     refetchInterval: 10000,
+  });
+}
+
+export function useCreateMonitor() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (newMonitor: { name: string; url: string; check_interval: number }) => {
+      const response = await api.post("/monitors/", {
+        ...newMonitor,
+        is_active: true, // Default to operational on creation
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      // Force TanStack Query to re-fetch the monitor list immediately in the background
+      queryClient.invalidateQueries({ queryKey: ["monitors"] });
+    },
   });
 }
