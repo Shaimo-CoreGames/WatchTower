@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useMonitors,useRealTimeAnalytics } from "@/hooks/useMonitors";
+import { useMonitors, useRealTimeAnalytics, useGlobalStats } from "@/hooks/useMonitors";
 import MonitorCard from "@/components/dashboard/MonitorCard";
 import AddMonitorModal from "@/components/dashboard/AddMonitorModal";
 
@@ -10,6 +10,8 @@ export default function DashboardHome() {
   useRealTimeAnalytics();
   
   const { data: monitors = [], isLoading, isError, error } = useMonitors();
+  // 💡 Consume the dynamic aggregate analytics dataset
+  const { data: stats, isLoading: isStatsLoading } = useGlobalStats();
   
   // Track open state for the monitor creation form overlay
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -75,7 +77,10 @@ export default function DashboardHome() {
             <div className="rounded-xl border border-border-muted bg-card-surface p-5 shadow-sm">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Global System Uptime</span>
               <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold tracking-tight text-status-success">99.98%</span>
+                {/* 💡 Operationalized Uptime Percentage */}
+                <span className="text-2xl font-bold tracking-tight text-status-success">
+                  {isStatsLoading ? "---" : `${stats?.global_uptime}%`}
+                </span>
                 <span className="text-xs font-medium text-text-muted">Operational</span>
               </div>
             </div>
@@ -83,7 +88,10 @@ export default function DashboardHome() {
             <div className="rounded-xl border border-border-muted bg-card-surface p-5 shadow-sm">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Average Network Latency</span>
               <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold tracking-tight text-text-title font-mono">42ms</span>
+                {/* 💡 Operationalized Latency Aggregate */}
+                <span className="text-2xl font-bold tracking-tight text-text-title font-mono">
+                  {isStatsLoading ? "---" : `${stats?.avg_latency}ms`}
+                </span>
                 <span className="text-xs font-medium text-text-muted">Sub-ms Precision</span>
               </div>
             </div>

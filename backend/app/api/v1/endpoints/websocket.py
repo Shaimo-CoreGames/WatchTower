@@ -50,11 +50,14 @@ async def redis_listener():
 # ⚡ Ensure the endpoint string matches exactly what your frontend calls
 @router.websocket("/ws/analytics")
 async def websocket_analytics_endpoint(websocket: WebSocket):
-    # 🤝 Accept the initial browser handshake
-    await websocket.accept()
+    # 💡 1. Let the global connection manager accept and track this browser tab instance
+    await manager.connect(websocket)
+    
     try:
         while True:
-            # Keep the channel open listening for client-side dropouts
-            data = await websocket.receive_text()
+            # 💡 2. Keep the channel open, listening for client-side disconnects or heartbeats
+            await websocket.receive_text()
     except WebSocketDisconnect:
+        # 💡 3. Remove the connection cleanly when the user closes their tab
+        manager.disconnect(websocket)
         print("Client disconnected from WatchTower socket cluster.")

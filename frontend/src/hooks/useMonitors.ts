@@ -139,3 +139,21 @@ export function useToggleMonitorStatus() {
     },
   });
 }
+
+export interface GlobalStats {
+  global_uptime: number;
+  avg_latency: number;
+  active_channels: string;
+}
+
+export function useGlobalStats() {
+  return useQuery<GlobalStats>({
+    queryKey: ["globalStats"],
+    queryFn: async () => {
+      const response = await api.get("/analytics/global-stats");
+      return response.data;
+    },
+    // Refresh these high-level dashboard metrics every 10 seconds automatically
+    refetchInterval: 10000, 
+  });
+}

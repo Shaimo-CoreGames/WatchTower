@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -48,3 +49,45 @@ async def get_monitor_metrics(
     # Return chronologically ascending sequence (left-to-right temporal progression)
     return list(reversed(records))
 
+
+@router.get("/analytics/global-stats")
+async def get_global_stats(db: AsyncSession = Depends(get_db)):
+    """
+    Computes global system-wide uptime statistics and average network 
+    latency across all registered target monitors dynamically.
+    """
+    # 1. Calculate Average Network Latency
+    latency_query = select(func.avg(HealthCheck.latency_ms)).where(HealthCheck.status_code.isnot(None))
+    latency_result = await db.execute(latency_query)
+    avg_latency = latency_result.scalar() or 0
+    
+    # 2. Compute Global System Uptime Percentage
+    # Formula: (Total Successful 200 Checks / Total Executed Checks) * 100
+    total_query = select(func.count(HealthCheck.id))
+    success_query = select(func.count(HealthCheck.id)).where(HealthCheck.status_code == 200)
+    
+    total_res = await db.execute(total_query)
+    success_res = await db.execute(success_query)
+    
+    total_count = total_res.scalar() or 0
+    success_count = success_res.scalar() or 0
+    
+    uptime_percentage = 100.0
+    if total_count > 0:
+        uptime_percentage = (success_count / total_count) * 100
+        
+    # 3. Get Active Channel Count
+    active_monitors_query = select(func.count(Monitor.id)).where(Monitor.is_active == True)
+    total_monitors_query = select(func.count(Monitor.id))
+    
+    active_res = await db.execute(active_monitors_query)
+    total_res_monitors = await db.execute(total_monitors_query)
+    
+    active_count = active_res.scalar() or 0
+    total_count_monitors = total_res_monitors.scalar() or 0
+
+    return {
+        "global_uptime": round(uptime_percentage, 2),
+        "avg_latency": int(avg_latency),
+        "active_channels": f"{active_count} / {total_count_monitors}"
+    }
