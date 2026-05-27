@@ -10,10 +10,12 @@ from app.models.monitor import Monitor
 from app.models.health_check import HealthCheck
 from app.schemas.health_check import HealthCheckResponse
 
-router = APIRouter(prefix="/analytics", tags=["Analytics & Telemetry"])
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 
-@router.get("/monitor/{monitor_id}", response_model=List[HealthCheckResponse])
+router = APIRouter()
+
+@router.get("/analytics/monitor/{monitor_id}", response_model=List[HealthCheckResponse])
 async def get_monitor_metrics(
     monitor_id: int,
     limit: int = Query(default=30, ge=1, le=100, description="Number of historical evaluation logs to pull"),
@@ -45,3 +47,4 @@ async def get_monitor_metrics(
     
     # Return chronologically ascending sequence (left-to-right temporal progression)
     return list(reversed(records))
+

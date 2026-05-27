@@ -1,10 +1,14 @@
 import time
 import httpx
+import json
+from redis import Redis
 from datetime import datetime
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal  # 💡 Using our clean sync factory
 from app.models.health_check import HealthCheck
 from app.models.monitor import Monitor
+
+redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
 @celery_app.task(name="tasks.trigger_all_active_monitors")
 def trigger_all_active_monitors():
@@ -61,8 +65,21 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         db.add(new_check)
         db.commit()
         print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
+        
+        # 💡 BROADCAST EVENT TO REDIS PUB/SUB
+        # We package the live metric data into a JSON string payload
+        broadcast_payload = {
+            "id": new_check.id,
+            "monitor_id": monitor_id,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "error_message": error_msg,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        redis_client.publish("monitor_updates", json.dumps(broadcast_payload))
+        
     except Exception as db_err:
         db.rollback()
         print(f"❌ Database write failure: {db_err}")
     finally:
-        db.close()  # Instantly release connection to the pool
+        db.close()

@@ -8,6 +8,10 @@ from app.core.config import settings
 
 from app.core.database import async_engine 
 from app.core.database import Base
+from app.api.v1.endpoints import websocket
+import asyncio
+from app.api.v1.endpoints.websocket import redis_listener
+
 
 
 @asynccontextmanager
@@ -41,6 +45,11 @@ app.add_middleware(
 
 # Mount our modular API Version 1 Router endpoints securely
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(websocket.router, tags=["websockets"])
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(redis_listener())
 
 @app.get("/")
 async def root_health_check():

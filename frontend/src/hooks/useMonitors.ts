@@ -1,4 +1,5 @@
-import { useQuery,useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "./useApi";
 
 export interface MonitorData {
@@ -21,20 +22,18 @@ export interface HealthCheckData {
 }
 
 export function useMonitors() {
-  // 1. Fetch all monitor configurations belonging to user
   return useQuery<MonitorData[]>({
     queryKey: ["monitors"],
     queryFn: async () => {
       const response = await api.get("/monitors/");
       return response.data;
     },
-    // Background polling frequency: Fetch new data updates every 10 seconds automatically
-    refetchInterval: 10000, 
+    // 💡 Polling is disabled! The system relies entirely on real-time event updates.
+    refetchInterval: false, 
   });
 }
 
 export function useMonitorAnalytics(monitorId: number | null) {
-  // 2. Fetch the latest 42 time-series health checks logs for sparkline graphs mapping
   return useQuery<HealthCheckData[]>({
     queryKey: ["analytics", monitorId],
     queryFn: async () => {
@@ -43,7 +42,8 @@ export function useMonitorAnalytics(monitorId: number | null) {
       return response.data;
     },
     enabled: !!monitorId,
-    refetchInterval: 10000,
+    // 💡 Polling is disabled!
+    refetchInterval: false,
   });
 }
 
@@ -54,13 +54,51 @@ export function useCreateMonitor() {
     mutationFn: async (newMonitor: { name: string; url: string; check_interval: number }) => {
       const response = await api.post("/monitors/", {
         ...newMonitor,
-        is_active: true, // Default to operational on creation
+        is_active: true,
       });
       return response.data;
     },
     onSuccess: () => {
-      // Force TanStack Query to re-fetch the monitor list immediately in the background
       queryClient.invalidateQueries({ queryKey: ["monitors"] });
     },
   });
+}
+
+// 💡 NEW: The real-time WebSocket connection loop manager
+export function useRealTimeAnalytics() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    // Connect to your FastAPI high-speed socket gateway
+    const ws = new WebSocket("ws://localhost:8000/api/v1/ws/analytics");
+
+    ws.onmessage = (event) => {
+      const incomingMetric: HealthCheckData = JSON.parse(event.data);
+      
+      // ⚡ TanStack Query Cache Mutation Logic
+      queryClient.setQueryData(
+        ["analytics", incomingMetric.monitor_id],
+        (oldData: HealthCheckData[] | undefined) => {
+          const currentCache = oldData ? [...oldData] : [];
+          
+          // Append the fresh metric to the end of your time-series history tracking array
+          currentCache.push(incomingMetric);
+          
+          // Enforce your strict 42-pillar grid capacity limitation constraint dynamically
+          if (currentCache.length > 42) {
+            currentCache.shift();
+          }
+          
+          return currentCache;
+        }
+      );
+    };
+
+    ws.onerror = (error) => console.error("📡 WatchTower Socket Error:", error);
+    ws.onclose = () => console.warn("📡 WatchTower Socket connection closed. Retrying...");
+
+    return () => {
+      ws.close();
+    };
+  }, [queryClient]);
 }

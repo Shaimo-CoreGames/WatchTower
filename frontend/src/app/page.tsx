@@ -1,11 +1,14 @@
 "use client";
 
 import React, { useState } from "react";
-import { useMonitors } from "@/hooks/useMonitors";
+import { useMonitors,useRealTimeAnalytics } from "@/hooks/useMonitors";
 import MonitorCard from "@/components/dashboard/MonitorCard";
 import AddMonitorModal from "@/components/dashboard/AddMonitorModal";
 
 export default function DashboardHome() {
+
+  useRealTimeAnalytics();
+  
   const { data: monitors = [], isLoading, isError, error } = useMonitors();
   
   // Track open state for the monitor creation form overlay
