@@ -69,29 +69,24 @@ export function useRealTimeAnalytics() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    // Connect to your FastAPI high-speed socket gateway
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws/analytics");
+    const ws = new WebSocket("ws://localhost:8000/api/v1/ws/analytics");
 
     ws.onmessage = (event) => {
       const incomingMetric: HealthCheckData = JSON.parse(event.data);
       
-      // ⚡ TanStack Query Cache Mutation Logic
+      // ⚡ 1. Update the individual monitor's sparkline array cache instantly
       queryClient.setQueryData(
         ["analytics", incomingMetric.monitor_id],
         (oldData: HealthCheckData[] | undefined) => {
           const currentCache = oldData ? [...oldData] : [];
-          
-          // Append the fresh metric to the end of your time-series history tracking array
           currentCache.push(incomingMetric);
-          
-          // Enforce your strict 42-pillar grid capacity limitation constraint dynamically
-          if (currentCache.length > 42) {
-            currentCache.shift();
-          }
-          
+          if (currentCache.length > 42) currentCache.shift();
           return currentCache;
         }
       );
+
+      // ⚡ 2. NEW: Instantly trigger an automatic background update for your global top stats card!
+      queryClient.invalidateQueries({ queryKey: ["globalStats"] });
     };
 
     ws.onerror = (error) => console.error("📡 WatchTower Socket Error:", error);
