@@ -70,7 +70,7 @@ export function useRealTimeAnalytics() {
 
   useEffect(() => {
     // Connect to your FastAPI high-speed socket gateway
-    const ws = new WebSocket("ws://localhost:8000/api/v1/ws/analytics");
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws/analytics");
 
     ws.onmessage = (event) => {
       const incomingMetric: HealthCheckData = JSON.parse(event.data);
@@ -101,4 +101,41 @@ export function useRealTimeAnalytics() {
       ws.close();
     };
   }, [queryClient]);
+}
+
+export function useDeleteMonitor() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (monitorId: number) => {
+      // Calls your DELETE /{monitor_id} endpoint natively
+      await api.delete(`/monitors/${monitorId}`);
+    },
+    onSuccess: () => {
+      // Instantly refresh the UI monitor list cache
+      queryClient.invalidateQueries({ queryKey: ["monitors"] });
+    },
+  });
+}
+
+export function useToggleMonitorStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ monitorId, isActive }: { monitorId: number; isActive: boolean }) => {
+      // Calls your PATCH /{monitor_id} endpoint to toggle tracking states
+      const response = await api.patch(`/monitors/${monitorId}`, {
+        is_active: isActive,
+      });
+      return response.data;
+    },
+    onSuccess: (_, variables) => {
+      // Refresh the monitor configurations cache structure immediately
+      queryClient.invalidateQueries({ queryKey: ["monitors"] });
+      // Clear out old time-series graphs cache lines if we are pausing tracking
+      if (!variables.isActive) {
+        queryClient.invalidateQueries({ queryKey: ["analytics", variables.monitorId] });
+      }
+    },
+  });
 }
