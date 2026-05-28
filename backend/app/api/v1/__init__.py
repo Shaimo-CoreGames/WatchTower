@@ -1,7 +1,6 @@
 from fastapi import APIRouter
 from app.api.v1 import auth, monitors,analytics,test
-from app.api.v1.endpoints import websocket
-from app.api.v1.endpoints import incidents
+from app.api.v1.endpoints import websocket,incidents,integrations
 
 api_router = APIRouter()
 
@@ -12,3 +11,4 @@ api_router.include_router(analytics.router)
 api_router.include_router(test.router)
 api_router.include_router(websocket.router)
 api_router.include_router(incidents.router)
+api_router.include_router(integrations.router)

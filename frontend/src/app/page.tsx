@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { useMonitors, useRealTimeAnalytics, useGlobalStats, useIncidents } from "@/hooks/useMonitors";
 import MonitorCard from "@/components/dashboard/MonitorCard";
 import AddMonitorModal from "@/components/dashboard/AddMonitorModal";
+import IntegrationWorkspace from "@/components/integration/IntegrationWorkspace";
 
 export default function DashboardHome() {
   useRealTimeAnalytics();
@@ -257,12 +258,10 @@ export default function DashboardHome() {
           </div>
         )}
 
+        {/* 💡 ACTIVE INTEGRATIONS PROVISIONING WORKSPACE CONTROLLER */}
         {activeMenu === "Integrations" && (
-          <div className="flex-1 overflow-y-auto space-y-4">
-            <h2 className="text-xl font-bold text-text-title">Notification Channels</h2>
-            <p className="text-sm text-text-muted">Connect automated alert dispatches via Slack or Webhooks.</p>
-          </div>
-        )}
+          <IntegrationWorkspace />
+            )}
 
         {activeMenu === "Settings" && (
           <div className="flex-1 overflow-y-auto space-y-4">

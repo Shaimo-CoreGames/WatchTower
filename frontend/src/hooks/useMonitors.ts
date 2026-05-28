@@ -175,3 +175,47 @@ export function useIncidents() {
     refetchInterval: 5000,
   });
 }
+
+
+export interface IntegrationData {
+  id: number;
+  name: string;
+  channel_type: string;
+  webhook_url: string;
+  is_active: boolean;
+}
+
+export function useIntegrations() {
+  const queryClient = useQueryClient();
+
+  const { data: integrations = [], isLoading } = useQuery<IntegrationData[]>({
+    queryKey: ["integrations"],
+    queryFn: async () => {
+      const response = await api.get("/integrations/");
+      return response.data;
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (newHook: { name: string; channel_type: string; webhook_url: string }) => {
+      return await api.post("/integrations/", newHook);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["integrations"] })
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return await api.patch(`/integrations/${id}/toggle`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["integrations"] })
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return await api.delete(`/integrations/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["integrations"] })
+  });
+
+  return { integrations, isLoading, createMutation, toggleMutation, deleteMutation };
+}
