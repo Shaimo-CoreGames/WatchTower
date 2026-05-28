@@ -21,7 +21,6 @@ class Monitor(Base):
     )
 
     # Relationships
-    owner: Mapped["User"] = relationship("User", back_populates="monitors")
-    checks: Mapped[list["HealthCheck"]] = relationship(
-        "HealthCheck", back_populates="monitor", cascade="all, delete-orphan"
-    )
+    incidents = relationship("Incident", back_populates="monitor", cascade="all, delete-orphan")
+    health_checks = relationship("HealthCheck", back_populates="monitor", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="monitors")

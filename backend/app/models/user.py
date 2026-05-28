@@ -20,5 +20,5 @@ class User(Base):
 
     # Relationship linking back to the monitors owned by this user
     monitors: Mapped[list["Monitor"]] = relationship(
-        "Monitor", back_populates="owner", cascade="all, delete-orphan"
+        "Monitor", back_populates="user", cascade="all, delete-orphan"
     )

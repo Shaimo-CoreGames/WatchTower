@@ -152,3 +152,26 @@ export function useGlobalStats() {
     refetchInterval: 10000, 
   });
 }
+
+export interface IncidentData {
+  id: number;
+  monitor_id: number;
+  monitor_name: string;
+  monitor_url: string;
+  error_details: string;
+  started_at: string;
+  resolved_at: string | null;
+  is_resolved: boolean;
+}
+
+export function useIncidents() {
+  return useQuery<IncidentData[]>({
+    queryKey: ["incidents"],
+    queryFn: async () => {
+      const response = await api.get("/incidents/");
+      return response.data;
+    },
+    // Poll for structural incident updates every 5 seconds to keep dashboard accurate
+    refetchInterval: 5000,
+  });
+}

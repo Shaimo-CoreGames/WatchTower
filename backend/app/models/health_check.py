@@ -19,9 +19,8 @@ class HealthCheck(Base):
         DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
     )
 
-    # Relationship back to parent model configuration
-    monitor: Mapped["Monitor"] = relationship("Monitor", back_populates="checks")
-
+    # Inside class HealthCheck(Base):
+    monitor = relationship("Monitor", back_populates="health_checks")
     # Composite indexing configuration for historical range lookup optimization
     __table_args__ = (
         Index("idx_monitor_timestamp", "monitor_id", "timestamp"),

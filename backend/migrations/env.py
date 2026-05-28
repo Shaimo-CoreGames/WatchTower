@@ -4,6 +4,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from alembic import context
 
+from app.core.database import Base
+
 # --- CRITICAL ARCHITECTURE ADAPTATIONS ---
 from app.core.config import settings
 from app.core.database import Base
@@ -11,6 +13,7 @@ from app.core.database import Base
 from app.models.user import User
 from app.models.monitor import Monitor
 from app.models.health_check import HealthCheck
+from app.models.incident import Incident
 # ------------------------------------------
 
 config = context.config
