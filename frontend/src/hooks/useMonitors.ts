@@ -117,20 +117,31 @@ export function useToggleMonitorStatus() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ monitorId, isActive }: { monitorId: number; isActive: boolean }) => {
-      // Calls your PATCH /{monitor_id} endpoint to toggle tracking states
+    // 💡 Accepting a simple number ID directly to fix the 'undefined' issue
+    mutationFn: async (monitorId: number) => {
+      // 1. Grab current cached monitors list to find this specific monitor's current state
+      const currentMonitors = queryClient.getQueryData<any[]>(["monitors"]) || [];
+      const targetMonitor = currentMonitors.find(m => (m.id ?? m._id) === monitorId);
+      
+      // 2. Flip the state (if it's true, send false; if missing, default to true)
+      const nextActiveState = targetMonitor ? !targetMonitor.is_active : true;
+
+      // 💡 Match the precise route shape your backend uses!
+      // If your backend route is actually /api/v1/monitors/{id}, keep it like this:
       const response = await api.patch(`/monitors/${monitorId}`, {
-        is_active: isActive,
+        is_active: nextActiveState,
       });
+
+      // NOTE: If your backend endpoint route is *actually* named `/monitors/{id}/toggle`, 
+      // uncomment the line below and delete the one above:
+      // const response = await api.patch(`/monitors/${monitorId}/toggle`);
+
       return response.data;
     },
-    onSuccess: (_, variables) => {
-      // Refresh the monitor configurations cache structure immediately
+    onSuccess: () => {
+      // Instantly trigger dashboard graph cache refreshes
       queryClient.invalidateQueries({ queryKey: ["monitors"] });
-      // Clear out old time-series graphs cache lines if we are pausing tracking
-      if (!variables.isActive) {
-        queryClient.invalidateQueries({ queryKey: ["analytics", variables.monitorId] });
-      }
+      queryClient.invalidateQueries({ queryKey: ["systemSettings"] });
     },
   });
 }
@@ -218,4 +229,37 @@ export function useIntegrations() {
   });
 
   return { integrations, isLoading, createMutation, toggleMutation, deleteMutation };
+}
+
+export interface SystemSettingsData {
+  operator: { name: string; role: string; joined: string };
+  database_stats: {
+    engine: string;
+    status: string;
+    total_monitors_provisioned: number;
+    total_telemetry_rows: number;
+    total_incidents_logged: number;
+  };
+  retention_policy_days: number;
+}
+
+export function useSystemSettings() {
+  const queryClient = useQueryClient();
+  
+  const query = useQuery<SystemSettingsData>({
+    queryKey: ["systemSettings"],
+    queryFn: async () => {
+      const response = await api.get("/settings/system-stats");
+      return response.data;
+    }
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: async () => {
+      return await api.post("/settings/purge-metrics");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["systemSettings"] })
+  });
+
+  return { ...query, purgeMutation };
 }

@@ -5,7 +5,9 @@ import React, { useState } from "react";
 import { useMonitors, useRealTimeAnalytics, useGlobalStats, useIncidents } from "@/hooks/useMonitors";
 import MonitorCard from "@/components/dashboard/MonitorCard";
 import AddMonitorModal from "@/components/dashboard/AddMonitorModal";
+import MonitorsWorkspace from "@/components/monitors/MonitorsWorkspace";
 import IntegrationWorkspace from "@/components/integration/IntegrationWorkspace";
+import SettingsWorkspace from "@/components/settings/SettingsWorkspace";
 
 export default function DashboardHome() {
   useRealTimeAnalytics();
@@ -250,12 +252,9 @@ export default function DashboardHome() {
           </div>
         )}
 
-        {/* Placeholder screens for your other active menus */}
+        {/* 💡 LIVE MONITORS WORKSPACE CONTROLLER */}
         {activeMenu === "Monitors" && (
-          <div className="flex-1 overflow-y-auto space-y-4">
-            <h2 className="text-xl font-bold text-text-title">Target Management</h2>
-            <p className="text-sm text-text-muted">Granular configurations panel for provisioned hooks.</p>
-          </div>
+          <MonitorsWorkspace />
         )}
 
         {/* 💡 ACTIVE INTEGRATIONS PROVISIONING WORKSPACE CONTROLLER */}
@@ -263,11 +262,9 @@ export default function DashboardHome() {
           <IntegrationWorkspace />
             )}
 
+        {/* 💡 SYSTEM ECOSYSTEM SETTINGS WORKSPACE CONTROLLER */}
         {activeMenu === "Settings" && (
-          <div className="flex-1 overflow-y-auto space-y-4">
-            <h2 className="text-xl font-bold text-text-title">Ecosystem Settings</h2>
-            <p className="text-sm text-text-muted">Configure polling time intervals and user profile tracking metrics.</p>
-          </div>
+          <SettingsWorkspace />
         )}
 
       </main>
