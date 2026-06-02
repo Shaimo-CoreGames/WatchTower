@@ -1,9 +1,10 @@
 import asyncio
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-import redis.asyncio.client as aioredis  # 💡 Use async redis driver for FastAPI
+import redis.asyncio.client as aioredis  # Async driver for FastAPI
 
-router = APIRouter()
+# 💡 Explicitly set the base prefix path for routing consistency
+router = APIRouter(prefix="/ws", tags=["WebSockets"])
 
 class ConnectionManager:
     def __init__(self):
@@ -14,7 +15,8 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
         """Sends raw message to all actively connected frontend tabs."""
@@ -27,7 +29,8 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-async def redis_listener():
+# 🟢 FIX: Ensure this function accepts the ConnectionManager instance!
+async def redis_listener(conn_manager: ConnectionManager):
     """Background listener loop that reads events from Redis and pipes them to the socket."""
     redis = aioredis.from_url("redis://127.0.0.1:6379/0", decode_responses=True)
     pubsub = redis.pubsub()
@@ -39,7 +42,8 @@ async def redis_listener():
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message and message.get("data"):
                 raw_payload = message["data"]
-                await manager.broadcast(raw_payload)
+                # ⚡ Broadcast through the shared connection manager instance
+                await conn_manager.broadcast(raw_payload)
             await asyncio.sleep(0.01)  # Yield execution control safely
     except Exception as e:
         print(f"❌ Redis Pub/Sub Router Connection Lost: {e}")
@@ -47,17 +51,18 @@ async def redis_listener():
         await pubsub.unsubscribe("monitor_updates")
         await redis.close()
 
-# ⚡ Ensure the endpoint string matches exactly what your frontend calls
-@router.websocket("/ws/analytics")
+
+# ⚡ Matches the frontend endpoint structure seamlessly
+@router.websocket("/analytics")
 async def websocket_analytics_endpoint(websocket: WebSocket):
-    # 💡 1. Let the global connection manager accept and track this browser tab instance
+    # 💡 Let the global connection manager accept and track this browser tab instance
     await manager.connect(websocket)
     
     try:
         while True:
-            # 💡 2. Keep the channel open, listening for client-side disconnects or heartbeats
+            # 💡 Keep the channel open, listening for client-side disconnects
             await websocket.receive_text()
     except WebSocketDisconnect:
-        # 💡 3. Remove the connection cleanly when the user closes their tab
+        # 💡 Remove the connection cleanly when the user closes their tab
         manager.disconnect(websocket)
         print("Client disconnected from WatchTower socket cluster.")

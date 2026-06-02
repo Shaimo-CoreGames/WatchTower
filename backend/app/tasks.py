@@ -1,4 +1,4 @@
-import time  # 💡 Added time import
+import time
 import httpx
 import json
 from redis import Redis
@@ -7,9 +7,10 @@ from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal  # Using our clean sync factory
 from app.models.health_check import HealthCheck
 from app.models.monitor import Monitor
-from app.models.incident import Incident  # 💡 Import your new Incident model
+from app.models.incident import Incident
 from app.models.integration import Integration
 
+# Unified Redis sync client instantiation
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
 
@@ -17,7 +18,6 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
     """Evaluates ping outcomes to manage incidents and trigger outward alerts."""
     is_check_successful = (status_code == 200)
 
-    # Fetch the parent monitor object to extract its Name and URL strings
     monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
     if not monitor:
         return
@@ -38,7 +38,6 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
             db.add(new_incident)
             print(f"🚨 [Incident Engine] Created new active incident for monitor #{monitor_id}")
             
-            # 💡 TRIGGER OUTBOUND DISPATCH SLACK ALERT FOR OUTAGE
             dispatch_external_alert(
                 monitor_name=monitor.name, 
                 monitor_url=monitor.url, 
@@ -52,13 +51,13 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
             active_incident.resolved_at = datetime.utcnow()
             print(f"🎉 [Incident Engine] Monitor #{monitor_id} recovered! Incident resolved.")
             
-            # 💡 TRIGGER OUTBOUND DISPATCH SLACK ALERT FOR RECOVERY
             dispatch_external_alert(
                 monitor_name=monitor.name, 
                 monitor_url=monitor.url, 
                 error_details="Service returned completely nominal.", 
                 status="RECOVERED"
             )
+
 
 @celery_app.task(name="tasks.trigger_all_active_monitors")
 def trigger_all_active_monitors():
@@ -72,7 +71,6 @@ def trigger_all_active_monitors():
         for monitor in active_monitors:
             interval = monitor.check_interval if monitor.check_interval else 60
             
-            # Smart Modulo Check
             if current_timestamp % interval < 10: 
                 celery_app.send_task("tasks.execute_endpoint_ping", args=[monitor.id, monitor.url])
                 tasks_dispatched += 1
@@ -83,7 +81,7 @@ def trigger_all_active_monitors():
     except Exception as e:
         print(f"❌ Beat failed to orchestrate monitors: {e}")
     finally:
-        db.close()  # Instantly release connection to the pool
+        db.close()
 
 
 @celery_app.task(name="tasks.execute_endpoint_ping")
@@ -95,6 +93,7 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
     
     try:
         with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            # 💡 Hit target endpoint
             response = client.get(target_url)
             status_code = response.status_code
             if status_code != 200:
@@ -117,7 +116,7 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         # 1. Save Health Check Telemetry Row
         db.add(new_check)
         
-        # 💡 2. PROCESS INCIDENT RULES (Before commit, leveraging same transaction)
+        # 2. Process Incident Engine State changes
         process_incident_rules(
             db=db, 
             monitor_id=monitor_id, 
@@ -128,16 +127,14 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         db.commit()
         print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
         
-        # 3. BROADCAST EVENT TO REDIS PUB/SUB
-        broadcast_payload = {
-            "id": new_check.id,
-            "monitor_id": monitor_id,
-            "status_code": status_code,
-            "latency_ms": latency_ms,
-            "error_message": error_msg,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        redis_client.publish("monitor_updates", json.dumps(broadcast_payload))
+        # 💡 3. UNIFIED PUB/SUB BROADCAST LAYER CALL
+        broadcast_monitor_update(
+            check_id=new_check.id,
+            monitor_id=monitor_id,
+            status_code=status_code,
+            latency_ms=latency_ms,
+            error_msg=error_msg
+        )
         
     except Exception as db_err:
         db.rollback()
@@ -145,23 +142,18 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
     finally:
         db.close()
 
+
 def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: str, status: str):
-    """
-    Scans integrations and dispatches Slack notifications with deep error logging.
-    """
+    """Scans integrations and dispatches Slack notifications."""
     db = SyncSessionLocal()
     try:
-        # Fetch any active webhook regardless of user constraints for testing parity
         active_hooks = db.query(Integration).filter(Integration.is_active == True).all()
-        
-        print(f"📡 [DEBUG Alert Dispatch] Found {len(active_hooks)} active webhook targets in database.")
+        print(f"📡 [DEBUG Alert Dispatch] Found {len(active_hooks)} active webhook targets.")
         
         if not active_hooks:
             return
 
         emoji = "🚨" if status == "DOWN" else "🎉"
-        
-        # Format payload strictly according to the Slack Incoming Webhook contract
         payload = {
             "text": f"{emoji} *WatchTower Alert Engine Notification*\n\n"
                     f"*Target:* {monitor_name}\n"
@@ -174,13 +166,32 @@ def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: 
         with httpx.Client(timeout=5.0) as client:
             for hook in active_hooks:
                 try:
-                    print(f"🚀 [DEBUG Alert Dispatch] Attempting POST to: {hook.name} -> {hook.webhook_url[:30]}...")
-                    response = client.post(hook.webhook_url, json=payload)
-                    print(f"📦 [Alert Dispatch] Response Status from Slack: {response.status_code} - {response.text}")
+                    client.post(hook.webhook_url, json=payload)
                 except Exception as dispatch_err:
-                    print(f"❌ [DEBUG] Failed to execute HTTP POST to {hook.name}: {dispatch_err}")
+                    print(f"❌ Failed alert dispatch to {hook.name}: {dispatch_err}")
 
     except Exception as general_err:
-        print(f"❌ [CRITICAL] Alert dispatcher exploded internally: {general_err}")
+        print(f"❌ Alert dispatcher exploded internally: {general_err}")
     finally:
         db.close()
+
+
+def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, latency_ms: int, error_msg: str | None):
+    """
+    Shouts a strictly mapped schema payload out across Redis Pub/Sub tunnels.
+    """
+    try:
+        broadcast_payload = {
+            "id": check_id,
+            "monitor_id": monitor_id,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "response_time": latency_ms,  # ⚡ Fallback duplicate field to satisfy chart metrics tracking strings
+            "error_message": error_msg,
+            "is_active": (status_code == 200),  # ⚡ Crucial: Frontend maps live metrics online cards with this boolean
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        redis_client.publish("monitor_updates", json.dumps(broadcast_payload))
+        print(f"📡 [Pub/Sub Unified Broadcast] Dispatched event update packet for monitor #{monitor_id}")
+    except Exception as e:
+        print(f"❌ Failed to publish live payload packet array to Redis engine pipeline: {e}")

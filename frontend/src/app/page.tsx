@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
-// 💡 Added useIncidents hook import here
+import React, { useState, useMemo } from "react";
 import { useMonitors, useRealTimeAnalytics, useGlobalStats, useIncidents } from "@/hooks/useMonitors";
 import MonitorCard from "@/components/dashboard/MonitorCard";
 import AddMonitorModal from "@/components/dashboard/AddMonitorModal";
@@ -10,11 +9,11 @@ import IntegrationWorkspace from "@/components/integration/IntegrationWorkspace"
 import SettingsWorkspace from "@/components/settings/SettingsWorkspace";
 
 export default function DashboardHome() {
+  // ⚡ Active WebSocket subscriber channel loop
   useRealTimeAnalytics();
   
   const { data: monitors = [], isLoading, isError, error } = useMonitors();
   const { data: stats, isLoading: isStatsLoading } = useGlobalStats();
-  // 💡 Pull real-time incident datasets down smoothly
   const { data: incidents = [], isLoading: isIncidentsLoading } = useIncidents();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -23,14 +22,24 @@ export default function DashboardHome() {
   const totalMonitors = monitors.length;
   const activeMonitors = monitors.filter(m => m.is_active).length;
 
-  // Split incident states efficiently for cleaner UI prioritization components
-  const activeOutages = incidents.filter(i => !i.is_resolved);
-  const resolvedHistory = incidents.filter(i => i.is_resolved);
+  // 🟢 Optimized: Prevent re-filtering calculation lag loops during real-time chart ticks
+  const { activeOutages, resolvedHistory } = useMemo(() => {
+    return {
+      activeOutages: incidents.filter(i => !i.is_resolved),
+      resolvedHistory: incidents.filter(i => i.is_resolved)
+    };
+  }, [incidents]);
 
-  // Helper function to render clean relative timestamp strings
-  const formatTime = (isoString: string) => {
+  // 🟢 Fixed: Safe evaluation fallback to guard against null string crashes
+  const formatTime = (isoString: string | null | undefined) => {
+    if (!isoString) return "Ongoing";
     const date = new Date(isoString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + " (" + date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ")";
+    return (
+      date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) +
+      " (" +
+      date.toLocaleDateString([], { month: "short", day: "numeric" }) +
+      ")"
+    );
   };
 
   return (
@@ -154,7 +163,7 @@ export default function DashboardHome() {
           </div>
         )}
 
-        {/* 💡 ACTIVE INCIDENTS OPERATION SCREEN CONTAINER */}
+        {/* ACTIVE INCIDENTS OPERATION SCREEN CONTAINER */}
         {activeMenu === "Incidents" && (
           <div className="flex-1 overflow-y-auto space-y-8 max-w-5xl pr-4">
             <div>
@@ -235,7 +244,7 @@ export default function DashboardHome() {
                           </td>
                           <td className="p-4 text-xs text-text-muted space-y-0.5">
                             <div><span className="font-semibold text-text-title">From:</span> {formatTime(incident.started_at)}</div>
-                            <div><span className="font-semibold text-text-title">To:</span> {formatTime(incident.resolved_at || "")}</div>
+                            <div><span className="font-semibold text-text-title">To:</span> {formatTime(incident.resolved_at)}</div>
                           </td>
                           <td className="p-4 text-right">
                             <span className="inline-flex items-center gap-1 rounded-md bg-status-success-bg text-status-success px-2 py-0.5 text-xs font-bold border border-status-success/10">
@@ -252,20 +261,10 @@ export default function DashboardHome() {
           </div>
         )}
 
-        {/* 💡 LIVE MONITORS WORKSPACE CONTROLLER */}
-        {activeMenu === "Monitors" && (
-          <MonitorsWorkspace />
-        )}
-
-        {/* 💡 ACTIVE INTEGRATIONS PROVISIONING WORKSPACE CONTROLLER */}
-        {activeMenu === "Integrations" && (
-          <IntegrationWorkspace />
-            )}
-
-        {/* 💡 SYSTEM ECOSYSTEM SETTINGS WORKSPACE CONTROLLER */}
-        {activeMenu === "Settings" && (
-          <SettingsWorkspace />
-        )}
+        {/* WORKSPACE ROUTES CONTROLLERS */}
+        {activeMenu === "Monitors" && <MonitorsWorkspace />}
+        {activeMenu === "Integrations" && <IntegrationWorkspace />}
+        {activeMenu === "Settings" && <SettingsWorkspace />}
 
       </main>
 
