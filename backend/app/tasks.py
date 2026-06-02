@@ -191,6 +191,12 @@ def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, l
             "is_active": (status_code == 200),  # ⚡ Crucial: Frontend maps live metrics online cards with this boolean
             "timestamp": datetime.utcnow().isoformat()
         }
+#  add this log
+        print(f"==================================================")
+        print(f"📤 [CELERY BROADCAST] Publishing to Redis channel 'monitor_updates' for Monitor #{monitor_id}")
+        print(f"Payload: {json.dumps(broadcast_payload)}")
+        print(f"==================================================")
+
         redis_client.publish("monitor_updates", json.dumps(broadcast_payload))
         print(f"📡 [Pub/Sub Unified Broadcast] Dispatched event update packet for monitor #{monitor_id}")
     except Exception as e:

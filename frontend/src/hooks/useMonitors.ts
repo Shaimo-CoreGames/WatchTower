@@ -81,6 +81,9 @@ export function useRealTimeAnalytics() {
 
     ws.onmessage = (event) => {
       try {
+        // 🔍 LOG 1: Raw String Ingestion
+        console.log("🔌 [WS RAW INBOUND] Received frame from backend cluster:", event.data);
+        
         const incoming = JSON.parse(event.data);
         if (!incoming || !incoming.monitor_id) return;
 
@@ -89,6 +92,10 @@ export function useRealTimeAnalytics() {
         const latency = incoming.latency_ms ?? incoming.response_time ?? 0;
         const isUp = statusCode === 200;
 
+        // 🔍 LOG 2: Safe Cache Pre-Check (Fixed reference error)
+        const currentCachedAnalytics = queryClient.getQueryData(["analytics", monitorId]);
+        console.log(`📊 [CACHE PRE-CHECK] Current entries in cache for Monitor #${monitorId}:`, currentCachedAnalytics);
+
         const normalizedMetric: HealthCheckData = {
           id: incoming.id ?? Number(`${monitorId}${Date.now()}`),
           monitor_id: monitorId,
@@ -96,31 +103,44 @@ export function useRealTimeAnalytics() {
           latency_ms: latency,
           error_message: incoming.error_message,
           timestamp: incoming.timestamp || new Date().toISOString(),
-          // Explicit mapping key to keep UI components from breaking
           is_active: incoming.is_active ?? isUp
         } as any;
 
-        // ✨ FIX 1: Use functional state updates to avoid race conditions with incoming frames
-        queryClient.setQueryData<HealthCheckData[]>(
-          ["analytics", monitorId],
-          (oldData) => {
-            const currentCache = oldData ? [...oldData] : [];
-            if (currentCache.some((item) => item.id === normalizedMetric.id)) return currentCache;
-            
-            const updatedCache = [...currentCache, normalizedMetric];
-            // Match the totalSlots padding grid boundary exactly
-            if (updatedCache.length > 42) updatedCache.shift();
-            return updatedCache;
-          }
-        );
+        // 🔍 LOG 3: Mutation Verification Target
+        console.log(`💾 [MUTATING CACHE] Appending node onto Monitor #${monitorId}:`, normalizedMetric);
 
-        // ✨ FIX 2: Soft invalidate structural cache entries without causing component remount blinks
+        // Functional updates to avoid race conditions with incoming frames
+        queryClient.setQueryData<HealthCheckData[]>(
+  ["analytics", monitorId],
+  (oldData) => {
+    const currentCache = oldData ? [...oldData] : [];
+    
+    // Guard clause against processing identical frames
+    if (currentCache.some((item) => item.id === normalizedMetric.id)) {
+      return currentCache;
+    }
+    
+    const updatedCache = [...currentCache, normalizedMetric];
+    
+    // 💡 INCREASE BOUNDARY: Set this slightly higher than your HTTP limit (e.g., 50) 
+    // so you can physically see the list grow and confirm updates in real-time!
+    if (updatedCache.length > 50) {
+      updatedCache.shift();
+    }
+    
+    return updatedCache;
+  }
+);
+        
+        // 🔍 LOG 4: Update Confirmation
+        console.log(`✅ [CACHE SUCCESS] Cache key ["analytics", ${monitorId}] updated. Dispatching invalidation signals.`);
+
+        // Soft invalidate metrics data structure keys safely
         queryClient.invalidateQueries({ 
           queryKey: ["monitors"], 
-          refetchType: "none" // Prevents the active network call from overriding your real-time cache append instantly
+          refetchType: "none" 
         });
 
-        // ✨ FIX 3: Clean key matching constraints for global sub-routes
         queryClient.invalidateQueries({ queryKey: ["globalStats"] });
         queryClient.invalidateQueries({ queryKey: ["incidents"] });
 

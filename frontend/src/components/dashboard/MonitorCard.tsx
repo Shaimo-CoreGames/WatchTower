@@ -13,8 +13,10 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
 
   const deleteMonitorMutation = useDeleteMonitor();
   const toggleStatusMutation = useToggleMonitorStatus();
-
-  const sortedChecks = useMemo(() => {
+  
+console.log(`🖥️ [RENDER CARD] Monitor: "${monitor.name}" (ID: ${monitor.id}) | Total historical check nodes in memory: ${checks.length} | Active State: ${monitor.is_active}`);
+ 
+const sortedChecks = useMemo(() => {
     return [...checks].sort(
       (a, b) =>
         new Date(a.timestamp).getTime() -

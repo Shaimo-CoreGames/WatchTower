@@ -8,27 +8,17 @@ from app.core.config import settings
 from app.core.database import async_engine 
 from app.core.database import Base
 
-import asyncio
-# Import BOTH the manager and the listener function explicitly
-from app.api.v1.endpoints.websocket import manager, redis_listener
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup Logic ---
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # 🟢 Pass the initialized manager directly to match the new signature
-    redis_task = asyncio.create_task(redis_listener(manager))
-    
     yield  # The app runs while paused here
     
     # --- Shutdown Logic ---
-    redis_task.cancel()
-    try:
-        await redis_task
-    except asyncio.CancelledError:
-        pass
+    # Cleaned up old global redis background tasks to let websocket endpoints 
+    # handle their own independent lifecycles dynamically.
 
 
 app = FastAPI(
