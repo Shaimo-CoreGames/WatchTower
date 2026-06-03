@@ -143,6 +143,7 @@ export function useRealTimeAnalytics() {
 
         queryClient.invalidateQueries({ queryKey: ["globalStats"] });
         queryClient.invalidateQueries({ queryKey: ["incidents"] });
+        queryClient.invalidateQueries({ queryKey: ["sparkline", monitorId] });
 
       } catch (err) {
         console.error("❌ Error running real-time state engine update:", err);
@@ -306,4 +307,21 @@ export function useSystemSettings() {
   });
 
   return { ...query, purgeMutation };
+}
+
+export interface SparklineData {
+  id: number;
+  latency_ms: number;
+  timestamp: string;
+}
+
+export function useMonitorSparkline(monitorId: number) {
+  return useQuery<SparklineData[]>({
+    queryKey: ["sparkline", monitorId],
+    queryFn: async () => {
+      const response = await api.get(`/analytics/monitor/${monitorId}/sparkline`);
+      return response.data;
+    },
+    refetchInterval: false, // Relies on WebSocket invalidation or soft polling
+  });
 }

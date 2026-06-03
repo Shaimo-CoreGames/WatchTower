@@ -1,49 +1,33 @@
 "use client";
 
-import React, { useMemo } from "react";
-import type { MonitorData, HealthCheckData } from "@/hooks/useMonitors";
-import { useMonitorAnalytics, useDeleteMonitor, useToggleMonitorStatus } from "@/hooks/useMonitors";
+import React from "react";
+import type { MonitorData } from "@/hooks/useMonitors";
+import { useDeleteMonitor, useToggleMonitorStatus, useMonitorSparkline } from "@/hooks/useMonitors";
+import LatencySparkline from "./LatencySparkline";
 
 interface MonitorCardProps {
   monitor: MonitorData;
 }
 
 export default function MonitorCard({ monitor }: MonitorCardProps) {
-  const { data: checks = [], isLoading } = useMonitorAnalytics(monitor.id);
-
+  // 🎯 FIX: Pull data from the same sparkline hook that updates via WebSocket!
+  const { data: chartData = [] } = useMonitorSparkline(monitor.id);
+  
   const deleteMonitorMutation = useDeleteMonitor();
   const toggleStatusMutation = useToggleMonitorStatus();
-  
-console.log(`🖥️ [RENDER CARD] Monitor: "${monitor.name}" (ID: ${monitor.id}) | Total historical check nodes in memory: ${checks.length} | Active State: ${monitor.is_active}`);
- 
-const sortedChecks = useMemo(() => {
-    return [...checks].sort(
-      (a, b) =>
-        new Date(a.timestamp).getTime() -
-        new Date(b.timestamp).getTime()
-    );
-  }, [checks]);
 
-  const latestCheck =
-    sortedChecks.length > 0
-      ? sortedChecks[sortedChecks.length - 1]
-      : null;
+  // Find the latest live node check from the end of the chronological list
+  const latestCheck = chartData.length > 0 ? chartData[chartData.length - 1] : null;
 
+  // Derive dynamic color states
   const isUp = monitor.is_active
-  ? latestCheck
-    ? latestCheck.status_code === 200
-    : true   // no data yet → optimistically show green until first check arrives
-  : false;
+    ? latestCheck
+      ? latestCheck.latency_ms > 0 // Optimistic check updates
+      : true
+    : false;
 
-// Show latency from latest check regardless of is_active (historical data still valid)
-const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";
-
-
-  const totalSlots = 42;
-  const paddedChecks = [
-    ...Array(Math.max(0, totalSlots - sortedChecks.length)).fill(null),
-    ...sortedChecks,
-  ] as (HealthCheckData | null)[];
+  // 🎯 FIX: Dynamically displays the live metric text value instantly
+  const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";
 
   const handleToggleStatus = async () => {
     await toggleStatusMutation.mutateAsync(monitor.id);
@@ -67,6 +51,7 @@ const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";
           : "border-border-muted bg-gray-50/50 dark:bg-neutral-900/30 opacity-75"
       }`}
     >
+      {/* Card Header metadata layer */}
       <div className="flex items-start justify-between">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -106,57 +91,28 @@ const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";
           {!monitor.is_active
             ? "Offline"
             : latestCheck
-              ? `${latestCheck.status_code} OK`
+              ? "Operational"
               : "Pending"}
         </span>
       </div>
 
+      {/* Latency Visual Stream and Sparkline Chart layout area */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-xs text-text-muted">
-          <span>42 checks ago</span>
-          <span className="font-medium text-text-title">
-            Latency: {currentLatency}
+          <span>Rolling History</span>
+          <span className="font-bold font-mono text-emerald-400 text-sm">
+            {currentLatency}
           </span>
           <span>Now</span>
         </div>
 
-        <div className="flex gap-[3px] h-6 w-full">
-          {isLoading ? (
-            <div className="h-full w-full bg-canvas animate-pulse rounded-sm" />
-          ) : !monitor.is_active ? (
-            <div className="h-full w-full bg-gray-100 dark:bg-neutral-800/20 rounded-md border border-dashed border-gray-200 flex items-center justify-center text-[10px] text-gray-400 font-medium">
-              Monitoring Paused
-            </div>
-          ) : (
-            paddedChecks.map((check, index) => {
-              if (!check) {
-                return (
-                  <div
-                    key={`empty-${index}`}
-                    className="h-full flex-1 rounded-sm bg-gray-100 dark:bg-neutral-800/40"
-                  />
-                );
-              }
-
-              const checkUp = check.status_code === 200;
-              const checkDegraded = checkUp && check.latency_ms > 500;
-
-              let statusBg = "bg-status-success";
-              if (checkDegraded) statusBg = "bg-status-warning";
-              if (!checkUp) statusBg = "bg-status-error";
-
-              return (
-                <div
-                  key={`${check.timestamp}-${index}`}
-                  className={`h-full flex-1 rounded-sm ${statusBg}`}
-                  title={`Latency: ${check.latency_ms}ms | Status: ${check.status_code}`}
-                />
-              );
-            })
-          )}
+        {/* Integrated Sparkline graph container */}
+        <div className="mt-1">
+          <LatencySparkline monitorId={monitor.id} />
         </div>
       </div>
 
+      {/* Action panel triggers section */}
       <div className="flex items-center justify-end gap-2 border-t border-border-muted pt-3 mt-1">
         <button
           onClick={handleToggleStatus}

@@ -10,6 +10,8 @@ from app.models.user import User
 from app.models.monitor import Monitor
 from app.models.health_check import HealthCheck
 from app.schemas.health_check import HealthCheckResponse  # Verify this schema path matches your project structure
+from pydantic import BaseModel
+from datetime import datetime
 
 # 🟢 FIX 1: Explicitly tie the sub-route prefix to /analytics right here
 router = APIRouter(prefix="/analytics", tags=["Analytics Telemetry"])
@@ -85,3 +87,32 @@ async def get_global_stats(
         "avg_latency": avg_latency,
         "active_channels": f"{active_monitors} / {total_monitors}"
     }
+
+class LatencySparklineSchema(BaseModel):
+    id: int
+    latency_ms: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/monitor/{monitor_id}/sparkline", response_model=list[LatencySparklineSchema])
+async def get_monitor_sparkline(monitor_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Returns the last 20 latency metrics ordered chronologically 
+    for high-density dashboard visualization.
+    """
+    # 1. Fetch last 20 items descending to get the newest rows first
+    query = (
+        select(HealthCheck)
+        .where(HealthCheck.monitor_id == monitor_id)
+        .order_by(HealthCheck.timestamp.desc())
+        .limit(20)
+    )
+    result = await db.execute(query)
+    metrics = result.scalars().all()
+    
+    # 2. Reverse them in Python so the array goes oldest -> newest for the chart timeline
+    metrics.reverse()
+    return metrics
