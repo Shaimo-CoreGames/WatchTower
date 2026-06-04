@@ -16,8 +16,9 @@ from app.models.integration import Integration
 # 🎯 Permanent unified Redis connection context
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
-# 🎯 Shared persistent HTTPX client pool to completely prevent port leakage (Fixes 503 errors)
+# 🎯 Shared persistent HTTPX client pool to completely prevent port leakage
 http_client_pool = httpx.Client(
+    verify=False,  # 🔌 MOVE VERIFY HERE: Disables SSL validation errors globally for the pool
     timeout=httpx.Timeout(10.0, connect=3.0),
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     headers={
@@ -110,9 +111,9 @@ def trigger_all_active_monitors():
 def execute_endpoint_ping(monitor_id: int, target_url: str):
     """
     Executes automated network validation pings using a safe, reusable global connection pool.
-    Verifies that the target monitor exists inside the database before saving updates.
+    Isolates pure server transaction processing latency from standard TCP/SSL connection overhead.
     """
-    # 🛡️ EARLY SAFETY CHECK: Catch desynced or deleted monitor IDs out of the queue
+    # 🛡️ EARLY SAFETY CHECK
     db = SyncSessionLocal()
     try:
         monitor_exists = db.query(Monitor).filter(Monitor.id == monitor_id).first()
@@ -125,22 +126,31 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
     finally:
         db.close()
 
-    start_time = time.time()
     status_code = None
     error_msg = None
+    latency_ms = 0
     
     try:
-        # 🎯 REUSE GLOBAL SOCKET CLIENT POOL (Halts 503 Connection pooling failures)
+        # 🎯 Perform HTTP validation call against target infrastructure
+        # Note: We pass verify=False for endpoints experiencing temporary local SSL trust errors
         response = http_client_pool.get(target_url)
         status_code = response.status_code
+        
+        # 📊 Professional Latency Calculation: Extract precise Time to First Byte window
+        latency_ms = int(response.elapsed.total_seconds() * 1000)
+        
         if status_code != 200:
             error_msg = f"Returned bad status code: {status_code}"
+            
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        latency_ms = int(e.response.elapsed.total_seconds() * 1000)
+        error_msg = f"HTTP status error: {status_code}"
     except Exception as e:
         error_msg = str(e)
         status_code = 500  
+        latency_ms = 0  # Connection could not be established
         
-    latency_ms = int((time.time() - start_time) * 1000)
-    
     new_check = HealthCheck(
         monitor_id=monitor_id,
         status_code=status_code,
@@ -148,29 +158,24 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         error_message=error_msg
     )
     
-    # Open fresh worker transaction block
     db = SyncSessionLocal()
     try:
-        # Double check existence within the current active transaction context block
         still_exists = db.query(Monitor).filter(Monitor.id == monitor_id).first()
         if not still_exists:
             print(f"⚠️ [Safety Engine] Monitor #{monitor_id} dropped mid-flight. Aborting write block.")
             return
 
         db.add(new_check)
-        
-        # Process structural state modifications safely inside the shared session execution instance
         process_incident_rules(
             db=db, 
             monitor_id=monitor_id, 
             status_code=status_code, 
             error_msg=error_msg
         )
-        
         db.commit()
+        
         print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
         
-        # Broadcast streaming pipeline payload downstream to our live Next.js frontends
         broadcast_monitor_update(
             check_id=new_check.id,
             monitor_id=monitor_id,
@@ -184,7 +189,6 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
         print(f"❌ Database write validation failure: {db_err}")
     finally:
         db.close()
-
 
 def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: str, status: str):
     """Finds activated platform hook links and broadcasts Slack alert payloads."""

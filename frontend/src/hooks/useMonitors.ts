@@ -21,6 +21,13 @@ export interface HealthCheckData {
   timestamp: string;
 }
 
+export interface SparklineData {
+  id: number;
+  latency_ms: number;
+  status_code: number;
+  timestamp: string;
+}
+
 export function useMonitors() {
   return useQuery<MonitorData[]>({
     queryKey: ["monitors"],
@@ -81,7 +88,6 @@ export function useRealTimeAnalytics() {
 
     ws.onmessage = (event) => {
       try {
-        // 🔍 LOG 1: Raw String Ingestion
         console.log("🔌 [WS RAW INBOUND] Received frame from backend cluster:", event.data);
         
         const incoming = JSON.parse(event.data);
@@ -92,10 +98,7 @@ export function useRealTimeAnalytics() {
         const latency = incoming.latency_ms ?? incoming.response_time ?? 0;
         const isUp = statusCode === 200;
 
-        // 🔍 LOG 2: Safe Cache Pre-Check (Fixed reference error)
-        const currentCachedAnalytics = queryClient.getQueryData(["analytics", monitorId]);
-        console.log(`📊 [CACHE PRE-CHECK] Current entries in cache for Monitor #${monitorId}:`, currentCachedAnalytics);
-
+        // 📊 Normalize full analytics record payload
         const normalizedMetric: HealthCheckData = {
           id: incoming.id ?? Number(`${monitorId}${Date.now()}`),
           monitor_id: monitorId,
@@ -103,47 +106,44 @@ export function useRealTimeAnalytics() {
           latency_ms: latency,
           error_message: incoming.error_message,
           timestamp: incoming.timestamp || new Date().toISOString(),
-          is_active: incoming.is_active ?? isUp
-        } as any;
+        };
 
-        // 🔍 LOG 3: Mutation Verification Target
-        console.log(`💾 [MUTATING CACHE] Appending node onto Monitor #${monitorId}:`, normalizedMetric);
+        // 📈 Normalize micro sparkline record payload
+        const normalizedSpark: SparklineData = {
+          id: normalizedMetric.id,
+          latency_ms: latency,
+          status_code: statusCode ?? 500,
+          timestamp: normalizedMetric.timestamp,
+        };
 
-        // Functional updates to avoid race conditions with incoming frames
+        console.log(`💾 [MUTATING CACHE] Synchronizing state updates for Monitor #${monitorId}`);
+
+        // 🎯 FIX 1: Direct Real-Time Cache Sync for Detailed Analytics View
         queryClient.setQueryData<HealthCheckData[]>(
-  ["analytics", monitorId],
-  (oldData) => {
-    const currentCache = oldData ? [...oldData] : [];
-    
-    // Guard clause against processing identical frames
-    if (currentCache.some((item) => item.id === normalizedMetric.id)) {
-      return currentCache;
-    }
-    
-    const updatedCache = [...currentCache, normalizedMetric];
-    
-    // 💡 INCREASE BOUNDARY: Set this slightly higher than your HTTP limit (e.g., 50) 
-    // so you can physically see the list grow and confirm updates in real-time!
-    if (updatedCache.length > 50) {
-      updatedCache.shift();
-    }
-    
-    return updatedCache;
-  }
-);
+          ["analytics", monitorId],
+          (oldData) => {
+            const currentCache = oldData ? [...oldData] : [];
+            if (currentCache.some((item) => item.id === normalizedMetric.id)) return currentCache;
+            const updatedCache = [...currentCache, normalizedMetric];
+            return updatedCache.length > 50 ? updatedCache.slice(-50) : updatedCache;
+          }
+        );
+
+        // 🎯 FIX 2: Direct Real-Time Cache Sync for the Sparkline Graphs (Unsticks the cards!)
+        queryClient.setQueryData<SparklineData[]>(
+          ["sparkline", monitorId],
+          (oldData) => {
+            const currentCache = oldData ? [...oldData] : [];
+            if (currentCache.some((item) => item.id === normalizedSpark.id)) return currentCache;
+            const updatedCache = [...currentCache, normalizedSpark];
+            return updatedCache.length > 40 ? updatedCache.slice(-40) : updatedCache;
+          }
+        );
         
-        // 🔍 LOG 4: Update Confirmation
-        console.log(`✅ [CACHE SUCCESS] Cache key ["analytics", ${monitorId}] updated. Dispatching invalidation signals.`);
-
-        // Soft invalidate metrics data structure keys safely
-        queryClient.invalidateQueries({ 
-          queryKey: ["monitors"], 
-          refetchType: "none" 
-        });
-
-        queryClient.invalidateQueries({ queryKey: ["globalStats"] });
-        queryClient.invalidateQueries({ queryKey: ["incidents"] });
-        queryClient.invalidateQueries({ queryKey: ["sparkline", monitorId] });
+        // 🎯 FIX 3: Soft invalidate global layouts without breaking active processing windows
+        queryClient.invalidateQueries({ queryKey: ["monitors"], refetchType: "none" });
+        queryClient.invalidateQueries({ queryKey: ["globalStats"], refetchType: "none" });
+        queryClient.invalidateQueries({ queryKey: ["incidents"], refetchType: "none" });
 
       } catch (err) {
         console.error("❌ Error running real-time state engine update:", err);
@@ -154,8 +154,8 @@ export function useRealTimeAnalytics() {
     ws.onclose = () => console.warn("📡 WatchTower Socket dropped cleanly.");
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+        wsRef.current.close();
         wsRef.current = null;
       }
     };
@@ -309,13 +309,6 @@ export function useSystemSettings() {
   return { ...query, purgeMutation };
 }
 
-export interface SparklineData {
-  id: number;
-  latency_ms: number;
-  status_code: number;
-  timestamp: string;
-}
-
 export function useMonitorSparkline(monitorId: number) {
   return useQuery<SparklineData[]>({
     queryKey: ["sparkline", monitorId],
@@ -323,6 +316,6 @@ export function useMonitorSparkline(monitorId: number) {
       const response = await api.get(`/analytics/monitor/${monitorId}/sparkline`);
       return response.data;
     },
-    refetchInterval: false, // Relies on WebSocket invalidation or soft polling
+    refetchInterval: false,
   });
 }
