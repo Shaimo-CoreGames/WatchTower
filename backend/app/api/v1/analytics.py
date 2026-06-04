@@ -91,6 +91,7 @@ async def get_global_stats(
 class LatencySparklineSchema(BaseModel):
     id: int
     latency_ms: int
+    status_code: int  # 🎯 FIX: Add this property to your data validation engine
     timestamp: datetime
 
     class Config:
@@ -103,7 +104,6 @@ async def get_monitor_sparkline(monitor_id: int, db: AsyncSession = Depends(get_
     Returns the last 20 latency metrics ordered chronologically 
     for high-density dashboard visualization.
     """
-    # 1. Fetch last 20 items descending to get the newest rows first
     query = (
         select(HealthCheck)
         .where(HealthCheck.monitor_id == monitor_id)
@@ -113,6 +113,8 @@ async def get_monitor_sparkline(monitor_id: int, db: AsyncSession = Depends(get_
     result = await db.execute(query)
     metrics = result.scalars().all()
     
-    # 2. Reverse them in Python so the array goes oldest -> newest for the chart timeline
-    metrics.reverse()
-    return metrics
+    # 🎯 FIX: Convert SQLAlchemy models to mutable lists before calling .reverse()
+    # directly modifying a database sequence can cause query execution runtime bugs.
+    mutable_metrics = list(metrics)
+    mutable_metrics.reverse()
+    return mutable_metrics

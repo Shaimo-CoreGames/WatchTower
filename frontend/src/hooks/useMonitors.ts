@@ -312,6 +312,7 @@ export function useSystemSettings() {
 export interface SparklineData {
   id: number;
   latency_ms: number;
+  status_code: number;
   timestamp: string;
 }
 
