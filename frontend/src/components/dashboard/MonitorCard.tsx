@@ -18,9 +18,21 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
   // Find the latest live check node
   const latestCheck = chartData.length > 0 ? chartData[chartData.length - 1] : null;
 
+  // 🎯 FIX: Pull the last 3 records to compute a rolling performance metric
+  const recentChecks = chartData.slice(-3);
+
+  const averageLatency = recentChecks.length > 0
+    ? recentChecks.reduce((acc, check) => acc + (check.latency_ms || 0), 0) / recentChecks.length
+    : 0;
+
   // 🎯 CALC STATE THRESHOLDS FOR THE ENTIRE CARD
   const isDown = monitor.is_active && latestCheck ? latestCheck.status_code !== 200 : false;
-  const isDegraded = monitor.is_active && latestCheck ? (latestCheck.status_code === 200 && latestCheck.latency_ms > 1000) : false;
+  
+  // Mark degraded ONLY if the server is up but the rolling average response window clears 1000ms
+  const isDegraded = monitor.is_active && latestCheck 
+    ? (latestCheck.status_code === 200 && averageLatency > 1000) 
+    : false;
+
   const isUp = monitor.is_active ? !isDown : false;
 
   const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";

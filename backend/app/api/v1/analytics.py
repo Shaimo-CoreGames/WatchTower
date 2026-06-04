@@ -101,20 +101,18 @@ class LatencySparklineSchema(BaseModel):
 @router.get("/monitor/{monitor_id}/sparkline", response_model=list[LatencySparklineSchema])
 async def get_monitor_sparkline(monitor_id: int, db: AsyncSession = Depends(get_db)):
     """
-    Returns the last 20 latency metrics ordered chronologically 
-    for high-density dashboard visualization.
+    Returns the last 40 latency metrics ordered chronologically 
+    to match frontend sparkline slicing windows precisely.
     """
     query = (
         select(HealthCheck)
         .where(HealthCheck.monitor_id == monitor_id)
         .order_by(HealthCheck.timestamp.desc())
-        .limit(20)
+        .limit(40)  # 🎯 FIXED: Increased from 20 to 40 to match UI state sync limits
     )
     result = await db.execute(query)
     metrics = result.scalars().all()
     
-    # 🎯 FIX: Convert SQLAlchemy models to mutable lists before calling .reverse()
-    # directly modifying a database sequence can cause query execution runtime bugs.
     mutable_metrics = list(metrics)
     mutable_metrics.reverse()
     return mutable_metrics
