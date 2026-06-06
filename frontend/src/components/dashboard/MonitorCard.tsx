@@ -15,29 +15,21 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
   const deleteMonitorMutation = useDeleteMonitor();
   const toggleStatusMutation = useToggleMonitorStatus();
 
-  // Find the latest live check node
+  // 1. Establish point-in-time check references cleanly
   const latestCheck = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+  const currentLatencyValue = latestCheck ? latestCheck.latency_ms : 0;
+  const currentStatusCode = latestCheck ? latestCheck.status_code : 200;
 
-  // 🎯 FIX: Pull the last 3 records to compute a rolling performance metric
-  const recentChecks = chartData.slice(-3);
-
-  const averageLatency = recentChecks.length > 0
-    ? recentChecks.reduce((acc, check) => acc + (check.latency_ms || 0), 0) / recentChecks.length
-    : 0;
-
-  // 🎯 CALC STATE THRESHOLDS FOR THE ENTIRE CARD
-  const isDown = monitor.is_active && latestCheck ? latestCheck.status_code !== 200 : false;
+  // 2. Clear Operational State Definitions (Matches text value to colors perfectly)
+  const isDown = monitor.is_active && latestCheck ? currentStatusCode !== 200 : false;
   
-  // Mark degraded ONLY if the server is up but the rolling average response window clears 1000ms
-  const isDegraded = monitor.is_active && latestCheck 
-    ? (latestCheck.status_code === 200 && averageLatency > 1000) 
-    : false;
+  // 🎯 UNIFIED EVALUATION BOUNDARIES: Yellow between 400ms and 1200ms, Red if over 1200ms
+  const isCriticalLatency = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 1200) : false;
+  const isDegraded = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 400 && currentLatencyValue <= 1200) : false;
 
-  const isUp = monitor.is_active ? !isDown : false;
+  const currentLatency = latestCheck ? `${currentLatencyValue}ms` : "--";
 
-  const currentLatency = latestCheck ? `${latestCheck.latency_ms}ms` : "--";
-
-  // Dynamic dynamic style assignments based on system status
+  // 3. Dynamic layout styling matching metric states accurately
   let latencyColorClass = "text-emerald-400";
   let statusBadgeClass = "bg-status-success-bg text-status-success border-status-success/20";
   let statusDotClass = "bg-status-success animate-pulse";
@@ -48,13 +40,13 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
     statusBadgeClass = "bg-gray-100 text-gray-500 border-gray-200";
     statusDotClass = "bg-gray-400";
     statusText = "Offline";
-  } else if (isDown) {
+  } else if (isDown || isCriticalLatency) {
     latencyColorClass = "text-red-500 font-bold animate-pulse";
     statusBadgeClass = "bg-status-error-bg text-status-error border-status-error/20";
     statusDotClass = "bg-status-error";
-    statusText = `${latestCheck?.status_code || 500} Down`;
+    statusText = isDown ? `${currentStatusCode} Down` : "High Latency";
   } else if (isDegraded) {
-    latencyColorClass = "text-amber-500";
+    latencyColorClass = "text-amber-500 font-medium";
     statusBadgeClass = "bg-status-warning-bg text-status-warning border-status-warning/20";
     statusDotClass = "bg-status-warning animate-bounce";
     statusText = "Degraded";
@@ -80,9 +72,11 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
     <div
       className={`rounded-xl border bg-card-surface p-5 shadow-sm flex flex-col gap-4 transition-all ${
         monitor.is_active
-          ? isDown 
+          ? (isDown || isCriticalLatency)
             ? "border-red-500/40 bg-red-500/[0.01]" 
-            : "border-border-muted hover:border-text-muted/30"
+            : isDegraded
+              ? "border-amber-500/40 bg-amber-500/[0.01]"
+              : "border-border-muted hover:border-text-muted/30"
           : "border-border-muted bg-gray-50/50 dark:bg-neutral-900/30 opacity-75"
       }`}
     >
