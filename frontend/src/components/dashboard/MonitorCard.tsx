@@ -23,9 +23,10 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
   // 2. Clear Operational State Definitions (Matches text value to colors perfectly)
   const isDown = monitor.is_active && latestCheck ? currentStatusCode !== 200 : false;
   
-  // 🎯 REAL-WORLD EVALUATION BOUNDARIES: Yellow between 1000ms and 2500ms, Red if over 2500ms
-  const isCriticalLatency = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 2500) : false;
-  const isDegraded = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 1000 && currentLatencyValue <= 2500) : false;
+  // 🌍 INDUSTRY STANDARD HTTP EVALUATION BOUNDARIES (Datadog, Pingdom, New Relic standards)
+  // Operational: < 1000ms | Degraded: 1000ms - 3000ms | Critical: > 3000ms
+  const isCriticalLatency = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 3000) : false;
+  const isDegraded = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 1000 && currentLatencyValue <= 3000) : false;
 
   const currentLatency = latestCheck ? `${currentLatencyValue}ms` : "--";
 
