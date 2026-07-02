@@ -22,12 +22,8 @@ http_client_pool = httpx.Client(
     timeout=httpx.Timeout(10.0, connect=3.0),
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        # 🔑 THE KEY FIX: Standard browser negotiation attributes to pass Vercel's edge filter
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     },
     follow_redirects=True
 )
@@ -176,8 +172,6 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
             status_code=status_code, 
             error_msg=error_msg
         )
-        db.flush() # Explicitly ensures database fields are generated
-        db.refresh(new_check) # 🎯 Secures the autoincremented ID safely into local memory
         db.commit()
         
         print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
