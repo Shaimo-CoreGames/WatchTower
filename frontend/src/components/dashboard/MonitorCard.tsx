@@ -23,9 +23,9 @@ export default function MonitorCard({ monitor }: MonitorCardProps) {
   // 2. Clear Operational State Definitions (Matches text value to colors perfectly)
   const isDown = monitor.is_active && latestCheck ? currentStatusCode !== 200 : false;
   
-  // 🎯 UNIFIED EVALUATION BOUNDARIES: Yellow between 400ms and 1200ms, Red if over 1200ms
-  const isCriticalLatency = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 1200) : false;
-  const isDegraded = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 400 && currentLatencyValue <= 1200) : false;
+  // 🎯 REAL-WORLD EVALUATION BOUNDARIES: Yellow between 1000ms and 2500ms, Red if over 2500ms
+  const isCriticalLatency = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 2500) : false;
+  const isDegraded = monitor.is_active && latestCheck ? (currentStatusCode === 200 && currentLatencyValue > 1000 && currentLatencyValue <= 2500) : false;
 
   const currentLatency = latestCheck ? `${currentLatencyValue}ms` : "--";
 
