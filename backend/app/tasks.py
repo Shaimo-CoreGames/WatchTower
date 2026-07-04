@@ -12,6 +12,9 @@ from app.models.health_check import HealthCheck
 from app.models.monitor import Monitor
 from app.models.incident import Incident
 from app.models.integration import Integration
+from urllib.parse import urlparse
+
+
 
 # 🎯 Permanent unified Redis connection context
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
@@ -110,7 +113,6 @@ def trigger_all_active_monitors():
     finally:
         db.close()
 
-
 @celery_app.task(name="tasks.execute_endpoint_ping")
 def execute_endpoint_ping(monitor_id: int, target_url: str):
     """
@@ -135,12 +137,25 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
     latency_ms = 0
     
     try:
-        # 🎯 Perform HTTP validation call against target infrastructure
-        # Note: We pass verify=False for endpoints experiencing temporary local SSL trust errors
-        response = http_client_pool.get(target_url)
+        parsed_url = urlparse(target_url)
+        target_host = parsed_url.netloc
+        
+        # 🔑 CACHE BUSTER: Append a dynamic timestamp parameter to make every request unique
+        # This tricks the edge router into treating it like an entirely new user action.
+        timestamp_param = f"t={int(time.time())}"
+        separator = "&" if "?" in target_url else "?"
+        final_url = f"{target_url}{separator}{timestamp_param}"
+        
+        response = http_client_pool.get(
+            final_url, # Use the modified url
+            headers={
+                "Host": target_host,
+                "Referer": f"https://{target_host}/"
+            }
+        )
         status_code = response.status_code
         
-        # 📊 Professional Latency Calculation: Extract precise Time to First Byte window
+        # 📊 Latency Calculation
         latency_ms = int(response.elapsed.total_seconds() * 1000)
         
         if status_code != 200:
@@ -176,8 +191,8 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
             status_code=status_code, 
             error_msg=error_msg
         )
-        db.flush() # Explicitly ensures database fields are generated
-        db.refresh(new_check) # 🎯 Secures the autoincremented ID safely into local memory
+        db.flush() 
+        db.refresh(new_check) 
         db.commit()
         
         print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
