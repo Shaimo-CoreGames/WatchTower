@@ -55,63 +55,47 @@ async def get_global_stats(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Aggregates dashboard-wide tracking statistics, status percentages, and mean 
-    processing latency bounded strictly to a rolling 24-hour transaction matrix.
-    """
-    # 1. Check if the user even has any targets provisioned
+    # 1. Fetch total count to verify zero-case safety
     total_monitors = (await db.execute(
         select(func.count(Monitor.id)).where(Monitor.user_id == current_user.id)
     )).scalar() or 0
 
-    # 🛡️ IMMEDIATE ZERO-CASE FALLBACK: Wipes the slate clean if everything is deleted
     if total_monitors == 0:
-        return {
-            "global_uptime": 100.00,
-            "avg_latency": 0,
-            "active_channels": "0 / 0"
-        }
+        return {"global_uptime": 100.0, "avg_latency": 0, "active_channels": "0 / 0"}
 
-    # ⏰ Define our strict 24-hour evaluation boundary
-    time_boundary = datetime.now(timezone.utc) - timedelta(hours=24)
+    # ⏰ Define a strict rolling 24-hour evaluation boundary
+    time_window = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    # 2. Compute rolling 24-hour average latency
+    # 2. Compute 24h Average Latency (Only tracking successful responses above 0ms)
     latency_query = (
         select(cast(func.avg(HealthCheck.latency_ms), Integer))
         .join(Monitor, HealthCheck.monitor_id == Monitor.id)
         .where(
             Monitor.user_id == current_user.id,
-            HealthCheck.timestamp >= time_boundary,
-            HealthCheck.latency_ms > 0, # Exclude total drops/connection drops from latency averages
-            HealthCheck.status_code == 200 # Average latency should only track working responses
+            HealthCheck.timestamp >= time_window,
+            HealthCheck.status_code == 200,
+            HealthCheck.latency_ms > 0
         )
     )
     latency_res = await db.execute(latency_query)
     avg_latency = latency_res.scalar() or 0
 
-    # 3. Compute rolling 24-hour uptime values
-    total_query = (
-        select(func.count(HealthCheck.id))
-        .join(Monitor)
-        .where(Monitor.user_id == current_user.id, HealthCheck.timestamp >= time_boundary)
+    # 3. Compute 24h Uptime Percentages
+    total_query = select(func.count(HealthCheck.id)).join(Monitor).where(
+        Monitor.user_id == current_user.id, 
+        HealthCheck.timestamp >= time_window
     )
-    success_query = (
-        select(func.count(HealthCheck.id))
-        .join(Monitor)
-        .where(
-            Monitor.user_id == current_user.id, 
-            HealthCheck.timestamp >= time_boundary, 
-            HealthCheck.status_code == 200
-        )
+    success_query = select(func.count(HealthCheck.id)).join(Monitor).where(
+        Monitor.user_id == current_user.id, 
+        HealthCheck.status_code == 200,
+        HealthCheck.timestamp >= time_window
     )
     
     total_count = (await db.execute(total_query)).scalar() or 0
     success_count = (await db.execute(success_query)).scalar() or 0
     
-    # If the app just booted up and has zero checks in the last 24h, report nominal health
     uptime_percentage = 100.0 if total_count == 0 else round((success_count / total_count) * 100, 2)
 
-    # 4. Compile channel allocations
     active_monitors = (await db.execute(
         select(func.count(Monitor.id)).where(Monitor.user_id == current_user.id, Monitor.is_active == True)
     )).scalar() or 0
@@ -121,6 +105,8 @@ async def get_global_stats(
         "avg_latency": avg_latency,
         "active_channels": f"{active_monitors} / {total_monitors}"
     }
+
+
 class LatencySparklineSchema(BaseModel):
     id: int
     latency_ms: int
