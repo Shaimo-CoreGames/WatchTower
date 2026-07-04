@@ -197,13 +197,16 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
             timestamp=datetime.now(timezone.utc)  # 👈 CHANGED THIS FROM checked_at TO timestamp
         )
         db.add(health_check_log)
-        db.commit()
-        db.refresh(health_check_log)
+        db.flush() # 👈 Use flush here to generate the health_check_log.id without committing yet
 
         # 2. Evaluate alert thresholds and incident changes
         process_incident_rules(db, monitor_id, status_code, error_message)
 
-        # 3. Stream real-time metrics back out to your WebSocket channels
+        # 3. Commit EVERYTHING (The health check log + any incident updates/creations)
+        db.commit() # 👈 MOVE COMMIT HERE TO SAVE ALL CHANGES AT ONCE
+        db.refresh(health_check_log)
+
+        # 4. Stream real-time metrics back out to your WebSocket channels
         broadcast_monitor_update(health_check_log.id, monitor_id, status_code, latency_ms, error_message)
 
     except Exception as write_err:
