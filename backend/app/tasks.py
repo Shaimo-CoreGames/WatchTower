@@ -16,22 +16,22 @@ from app.models.integration import Integration
 # 🎯 Permanent unified Redis connection context
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
-# 🎯 Shared persistent HTTPX client pool to completely prevent port leakage
+# 🎯 Shared persistent HTTPX client pool with full browser attributes
 http_client_pool = httpx.Client(
-    verify=False,  # 🔌 MOVE VERIFY HERE: Disables SSL validation errors globally for the pool
+    verify=False,
     timeout=httpx.Timeout(10.0, connect=3.0),
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        # 🔑 THE KEY FIX: Standard browser negotiation attributes to pass Vercel's edge filter
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br", # 🛡️ CRITICAL: Signals the client handles compression natively
+        "Connection": "keep-alive",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
     },
     follow_redirects=True
 )
-
 
 def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str):
     """
