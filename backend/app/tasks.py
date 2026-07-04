@@ -22,7 +22,7 @@ redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 # 🎯 Shared persistent HTTPX client pool with full browser attributes
 http_client_pool = httpx.Client(
     verify=False,
-    timeout=httpx.Timeout(10.0, connect=3.0),
+    timeout=httpx.Timeout(12.0, connect=5.0, read=5.0),
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -113,103 +113,77 @@ def trigger_all_active_monitors():
     finally:
         db.close()
 
-@celery_app.task(name="tasks.execute_endpoint_ping")
-def execute_endpoint_ping(monitor_id: int, target_url: str):
+def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str, threshold: int = 3):
     """
-    Executes automated network validation pings using a safe, reusable global connection pool.
-    Isolates pure server transaction processing latency from standard TCP/SSL connection overhead.
+    Evaluates recent historical health logs to determine if an incident should trigger.
+    Requires 'threshold' consecutive failures before sounding the alarm.
     """
-    # 🛡️ EARLY SAFETY CHECK
-    db = SyncSessionLocal()
-    try:
-        monitor_exists = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-        if not monitor_exists:
-            print(f"⚠️ [Safety Engine] Skipped task execution. Monitor #{monitor_id} does not exist in the database.")
-            return
-    except Exception as check_err:
-        print(f"❌ Safety verification lookup failed: {check_err}")
+    is_current_check_healthy = (status_code == 200 and error_msg is None)
+
+    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
+    if not monitor:
         return
-    finally:
-        db.close()
 
-    status_code = None
-    error_msg = None
-    latency_ms = 0
-    
-    try:
-        parsed_url = urlparse(target_url)
-        target_host = parsed_url.netloc
-        
-        # 🔑 CACHE BUSTER: Append a dynamic timestamp parameter to make every request unique
-        # This tricks the edge router into treating it like an entirely new user action.
-        timestamp_param = f"t={int(time.time())}"
-        separator = "&" if "?" in target_url else "?"
-        final_url = f"{target_url}{separator}{timestamp_param}"
-        
-        response = http_client_pool.get(
-            final_url, # Use the modified url
-            headers={
-                "Host": target_host,
-                "Referer": f"https://{target_host}/"
-            }
-        )
-        status_code = response.status_code
-        
-        # 📊 Latency Calculation
-        latency_ms = int(response.elapsed.total_seconds() * 1000)
-        
-        if status_code != 200:
-            error_msg = f"Returned bad status code: {status_code}"
-            
-    except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code
-        latency_ms = int(e.response.elapsed.total_seconds() * 1000)
-        error_msg = f"HTTP status error: {status_code}"
-    except Exception as e:
-        error_msg = str(e)
-        status_code = 500  
-        latency_ms = 0  # Connection could not be established
-        
-    new_check = HealthCheck(
-        monitor_id=monitor_id,
-        status_code=status_code,
-        latency_ms=latency_ms,
-        error_message=error_msg
+    # 1. FETCH RECENT HISTORY (Get the last 'threshold' checks ordered by most recent)
+    # Includes the newly inserted check flushed right before calling this function
+    recent_checks = (
+        db.query(HealthCheck)
+        .filter(HealthCheck.monitor_id == monitor_id)
+        .order_by(HealthCheck.id.desc())
+        .limit(threshold)
+        .all()
     )
-    
-    db = SyncSessionLocal()
-    try:
-        still_exists = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-        if not still_exists:
-            print(f"⚠️ [Safety Engine] Monitor #{monitor_id} dropped mid-flight. Aborting write block.")
-            return
 
-        db.add(new_check)
-        process_incident_rules(
-            db=db, 
-            monitor_id=monitor_id, 
-            status_code=status_code, 
-            error_msg=error_msg
-        )
-        db.flush() 
-        db.refresh(new_check) 
-        db.commit()
+    # 2. CHECK FOR AN ACTIVE INCIDENT
+    active_incident = db.query(Incident).filter(
+        Incident.monitor_id == monitor_id, 
+        Incident.is_resolved == False
+    ).first()
+
+    # 3. EVALUATE DOWN TRIGGER RULE
+    if not is_current_check_healthy:
+        # Check how many of our recent checks failed
+        consecutive_failures = [c for c in recent_checks if c.status_code != 200 or c.error_message is not None]
         
-        print(f"✅ Saved Metric: {target_url} -> {status_code} ({latency_ms}ms)")
-        
-        broadcast_monitor_update(
-            check_id=new_check.id,
-            monitor_id=monitor_id,
-            status_code=status_code,
-            latency_ms=latency_ms,
-            error_msg=error_msg
-        )
-        
-    except Exception as db_err:
-        db.rollback()
-        print(f"❌ Database write validation failure: {db_err}")
-    finally:
-        db.close()
+        # Only raise an incident if we hit or exceed the continuous limit threshold
+        if len(consecutive_failures) >= threshold:
+            if not active_incident:
+                # 🚨 TRIGGER NEW INCIDENT: Sound the alarms!
+                new_incident = Incident(
+                    monitor_id=monitor_id,
+                    error_details=error_msg if error_msg else f"HTTP Error Status {status_code}",
+                    started_at=datetime.now(timezone.utc),
+                    is_resolved=False
+                )
+                db.add(new_incident)
+                db.flush() # Populate ID parameters safely
+                print(f"🚨 [Alert Engine] Target #{monitor_id} breached threshold ({threshold} continuous failures). Incident Opened!")
+                
+                # Corrected call to use your actual dispatch engine function
+                dispatch_external_alert(
+                    monitor_name=monitor.name, 
+                    monitor_url=monitor.url, 
+                    error_details=new_incident.error_details, 
+                    status="DOWN"
+                )
+        else:
+            print(f"⚠️ [Alert Engine] Target #{monitor_id} missed a ping, but failure count ({len(consecutive_failures)}/{threshold}) is below threshold. Suppressing alert.")
+
+    # 4. EVALUATE RECOVERY TRIGGER RULE
+    else:
+        # The current check is completely healthy! If an incident was active, close it out.
+        if active_incident:
+            active_incident.is_resolved = True
+            active_incident.resolved_at = datetime.now(timezone.utc)
+            print(f"🎉 [Alert Engine] Target #{monitor_id} returned to operational baseline. Incident Closed!")
+            
+            # Corrected call to use your actual dispatch engine function
+            dispatch_external_alert(
+                monitor_name=monitor.name, 
+                monitor_url=monitor.url, 
+                error_details="Service returned completely nominal status codes.", 
+                status="RECOVERED"
+            )
 
 def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: str, status: str):
     """Finds activated platform hook links and broadcasts Slack alert payloads."""
