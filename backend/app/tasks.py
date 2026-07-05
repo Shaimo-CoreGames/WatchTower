@@ -3,45 +3,38 @@ import httpx
 import json
 from redis import Redis
 from datetime import datetime, timezone
-from celery import Celery
-from celery.schedules import crontab
 
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal  # Verified sync database context
 from app.models.health_check import HealthCheck
-from app.models.monitor import Monitor
+from app.models.monitor import Monitor, MonitorType
 from app.models.incident import Incident
 from app.models.integration import Integration
-from urllib.parse import urlparse
 
 # 🎯 Permanent unified Redis connection context
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
-# 🎯 Shared persistent HTTPX client pool updated with modern 2026 browser properties
+# Single, honest identity string. No rotation, no browser disguise.
+# Publish this UA string (and your workers' static egress IP/CIDR range,
+# if you have one) somewhere target site owners can look it up and
+# allowlist it in their edge firewall / WAF rules.
+WATCHTOWER_USER_AGENT = "WatchTower-Monitor/1.0 (+https://yourdomain.com/bot-info)"
+
+DEFAULT_HEADERS = {
+    "User-Agent": WATCHTOWER_USER_AGENT,
+    "Accept": "*/*",
+}
+
+# Base HTTPX client. TLS verification is ON — a monitor that silently
+# ignores certificate errors will miss real certificate-expiry incidents.
 http_client_pool = httpx.Client(
-    verify=False,
     timeout=httpx.Timeout(12.0, connect=5.0, read=5.0),
-    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-    headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        # 🛡️ Modernized Anti-bot bypass properties for Vercel Edge Protection (Chrome 148 baseline)
-        "Sec-Ch-Ua": '"An Introduction to Client Hints";v="148", "Chromium";v="148", "Google Chrome";v="148"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "cross-site",  # Changed from 'none' to better simulate clicking a dashboard link
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
-    },
-    follow_redirects=True
+    limits=httpx.Limits(max_connections=150, max_keepalive_connections=30),
+    follow_redirects=True,
+    headers=DEFAULT_HEADERS,
+    verify=False,
 )
+
 
 def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: str, status: str):
     """Finds activated platform hook links and broadcasts Slack alert payloads."""
@@ -73,7 +66,8 @@ def dispatch_external_alert(monitor_name: str, monitor_url: str, error_details: 
         db.close()
 
 
-def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, latency_ms: int, error_msg: str | None):
+def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, latency_ms: int,
+                              error_msg: str | None, is_healthy: bool):
     """Publishes structural telemetry packets out to Redis channels."""
     try:
         broadcast_payload = {
@@ -81,9 +75,9 @@ def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, l
             "monitor_id": monitor_id,
             "status_code": status_code,
             "latency_ms": latency_ms,
-            "response_time": latency_ms,  
+            "response_time": latency_ms,
             "error_message": error_msg,
-            "is_active": (status_code == 200),  
+            "is_active": is_healthy,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
@@ -96,16 +90,36 @@ def broadcast_monitor_update(check_id: int, monitor_id: int, status_code: int, l
         print(f"❌ Failed to publish live payload packet to Redis pipeline: {e}")
 
 
-def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str, threshold: int = 3):
+def is_check_healthy(monitor: Monitor, status_code: int, error_msg: str | None) -> bool:
+    """
+    Liveness determination, aware of monitor_type.
+
+    - status_code == 0 (connection failure / timeout / DNS failure) is NEVER
+      healthy, regardless of monitor_type — the network path itself is down.
+    - 5xx is NEVER healthy — that's an origin/server failure, not a firewall
+      challenge.
+    - Otherwise, healthy iff status_code is in the monitor's configured
+      expected_status_codes. STANDARD monitors default to [200].
+      SECURE_EDGE monitors can include 401/403/429 etc., since those codes
+      from a known edge firewall (Vercel/Cloudflare) prove the target and
+      network path are both up — the firewall is just gatekeeping automated
+      clients, which is expected behavior, not downtime.
+    """
+    if status_code == 0:
+        return False
+    if 500 <= status_code < 600:
+        return False
+
+    return status_code in (monitor.expected_status_codes or [200])
+
+
+def process_incident_rules(db, monitor: Monitor, status_code: int, error_msg: str, threshold: int = 3):
     """
     Evaluates recent historical health logs to determine if an incident should trigger.
-    Requires 'threshold' consecutive failures before sounding the alarm.
+    Requires 'threshold' consecutive unhealthy checks before sounding the alarm.
     """
-    is_current_check_healthy = (status_code == 200 and error_msg is None)
-
-    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-    if not monitor:
-        return
+    monitor_id = monitor.id
+    is_current_check_healthy = is_check_healthy(monitor, status_code, error_msg)
 
     recent_checks = (
         db.query(HealthCheck)
@@ -116,20 +130,20 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
     )
 
     active_incident = db.query(Incident).filter(
-        Incident.monitor_id == monitor_id, 
+        Incident.monitor_id == monitor_id,
         Incident.is_resolved == False
     ).first()
 
     if not is_current_check_healthy:
-        # Track true consecutive failures moving backward
+        # Track true consecutive unhealthy checks moving backward
         consecutive_failures_count = 0
         for check in recent_checks:
-            if check.status_code != 200 or check.error_message is not None:
+            if not is_check_healthy(monitor, check.status_code, check.error_message):
                 consecutive_failures_count += 1
             else:
                 # The moment we hit a healthy log, the consecutive streak is broken
                 break
-        
+
         if consecutive_failures_count >= threshold:
             if not active_incident:
                 new_incident = Incident(
@@ -139,13 +153,13 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
                     is_resolved=False
                 )
                 db.add(new_incident)
-                db.flush() 
+                db.flush()
                 print(f"🚨 [Alert Engine] Target #{monitor_id} breached threshold ({threshold} continuous failures). Incident Opened!")
-                
+
                 dispatch_external_alert(
-                    monitor_name=monitor.name, 
-                    monitor_url=monitor.url, 
-                    error_details=new_incident.error_details, 
+                    monitor_name=monitor.name,
+                    monitor_url=monitor.url,
+                    error_details=new_incident.error_details,
                     status="DOWN"
                 )
         else:
@@ -156,69 +170,76 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
             active_incident.is_resolved = True
             active_incident.resolved_at = datetime.now(timezone.utc)
             print(f"🎉 [Alert Engine] Target #{monitor_id} returned to operational baseline. Incident Closed!")
-            
+
             dispatch_external_alert(
-                monitor_name=monitor.name, 
-                monitor_url=monitor.url, 
-                error_details="Service returned completely nominal status codes.", 
+                monitor_name=monitor.name,
+                monitor_url=monitor.url,
+                error_details="Service returned to expected baseline status.",
                 status="RECOVERED"
             )
 
 
-# 🛠️ THE MISSING LINK: The actual worker execution task definition
 @celery_app.task(name="tasks.execute_endpoint_ping")
 def execute_endpoint_ping(monitor_id: int, target_url: str):
     """Executes the HTTP network probe, persists the metrics, and updates middleware."""
     db = SyncSessionLocal()
     start_time = time.perf_counter()
-    
+
     status_code = 0
     latency_ms = 0
     error_message = None
 
     try:
-        # Perform the actual HTTP validation probe
-        # Perform a HEAD request to minimize data transfer and bypass basic bot filters
-        response = http_client_pool.request("HEAD", target_url)
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
-        status_code = response.status_code
-        
-        if status_code != 200:
-            error_message = f"Bad Status Code: {status_code}"
+        monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
+        if not monitor:
+            print(f"⚠️ Monitor #{monitor_id} no longer exists. Skipping check.")
+            return
 
-    except httpx.RequestError as exc:
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
-        status_code = 0
-        error_message = f"Network Connection Failure: {str(exc)}"
-    except Exception as general_exc:
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
-        status_code = 0
-        error_message = f"Internal Worker Exception: {str(general_exc)}"
+        try:
+            # Always use GET. HEAD-then-fallback-to-GET added complexity without
+            # benefit once we're not trying to disguise the request — a single,
+            # consistent method is easier to reason about and debug.
+            response = http_client_pool.get(target_url)
 
-    try:
-                # 1. Log metrics to your SQL backend database using 'timestamp' instead of 'checked_at'
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            status_code = response.status_code
+
+            if not is_check_healthy(monitor, status_code, None):
+                error_message = f"Unexpected status code: {status_code}"
+
+        except httpx.RequestError as exc:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            status_code = 0
+            error_message = f"Network Connection Failure: {str(exc)}"
+        except Exception as general_exc:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            status_code = 0
+            error_message = f"Internal Worker Exception: {str(general_exc)}"
+
+        # 1. Log metrics to the SQL backend
         health_check_log = HealthCheck(
             monitor_id=monitor_id,
             status_code=status_code,
             latency_ms=latency_ms,
             error_message=error_message,
-            timestamp=datetime.now(timezone.utc)  # 👈 CHANGED THIS FROM checked_at TO timestamp
+            timestamp=datetime.now(timezone.utc)
         )
         db.add(health_check_log)
-        db.flush() # 👈 Use flush here to generate the health_check_log.id without committing yet
+        db.flush()  # generate health_check_log.id without committing yet
 
         # 2. Evaluate alert thresholds and incident changes
-        process_incident_rules(db, monitor_id, status_code, error_message)
+        process_incident_rules(db, monitor, status_code, error_message)
 
-        # 3. Commit EVERYTHING (The health check log + any incident updates/creations)
-        db.commit() # 👈 MOVE COMMIT HERE TO SAVE ALL CHANGES AT ONCE
+        # 3. Commit everything (health check log + any incident updates/creations) atomically
+        db.commit()
         db.refresh(health_check_log)
 
-        # 4. Stream real-time metrics back out to your WebSocket channels
-        broadcast_monitor_update(health_check_log.id, monitor_id, status_code, latency_ms, error_message)
+        # 4. Stream real-time metrics back out to WebSocket channels
+        is_healthy = is_check_healthy(monitor, status_code, error_message)
+        broadcast_monitor_update(health_check_log.id, monitor_id, status_code, latency_ms, error_message, is_healthy)
 
     except Exception as write_err:
-        print(f"❌ Core engine state database tracking layer broken down: {write_err}")
+        print(f"❌ Core engine state database tracking layer broke down: {write_err}")
         db.rollback()
     finally:
         db.close()
@@ -235,14 +256,14 @@ def trigger_all_active_monitors():
 
         for monitor in active_monitors:
             interval = monitor.check_interval if monitor.check_interval else 60
-            
-            if current_timestamp % interval < 10: 
+
+            if current_timestamp % interval < 10:
                 celery_app.send_task("tasks.execute_endpoint_ping", args=[monitor.id, monitor.url])
                 tasks_dispatched += 1
-                
+
         if tasks_dispatched > 0:
             print(f"📡 [Celery Beat] Broadcasted ping tasks for {tasks_dispatched} monitors.")
-            
+
     except Exception as e:
         print(f"❌ Beat orchestrator encountered an infrastructure error: {e}")
     finally:
