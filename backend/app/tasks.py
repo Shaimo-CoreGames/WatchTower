@@ -17,26 +17,26 @@ from urllib.parse import urlparse
 # 🎯 Permanent unified Redis connection context
 redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
 
-# 🎯 Shared persistent HTTPX client pool disguised with full browser properties
+# 🎯 Shared persistent HTTPX client pool updated with modern 2026 browser properties
 http_client_pool = httpx.Client(
     verify=False,
     timeout=httpx.Timeout(12.0, connect=5.0, read=5.0),
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        # 🛡️ Anti-bot bypass properties for Vercel Edge Protection
-        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        # 🛡️ Modernized Anti-bot bypass properties for Vercel Edge Protection (Chrome 148 baseline)
+        "Sec-Ch-Ua": '"An Introduction to Client Hints";v="148", "Chromium";v="148", "Google Chrome";v="148"',
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Site": "cross-site",  # Changed from 'none' to better simulate clicking a dashboard link
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1"
     },
@@ -121,9 +121,16 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
     ).first()
 
     if not is_current_check_healthy:
-        consecutive_failures = [c for c in recent_checks if c.status_code != 200 or c.error_message is not None]
+        # Track true consecutive failures moving backward
+        consecutive_failures_count = 0
+        for check in recent_checks:
+            if check.status_code != 200 or check.error_message is not None:
+                consecutive_failures_count += 1
+            else:
+                # The moment we hit a healthy log, the consecutive streak is broken
+                break
         
-        if len(consecutive_failures) >= threshold:
+        if consecutive_failures_count >= threshold:
             if not active_incident:
                 new_incident = Incident(
                     monitor_id=monitor_id,
@@ -142,7 +149,7 @@ def process_incident_rules(db, monitor_id: int, status_code: int, error_msg: str
                     status="DOWN"
                 )
         else:
-            print(f"⚠️ [Alert Engine] Target #{monitor_id} missed a ping, but failure count ({len(consecutive_failures)}/{threshold}) is below threshold. Suppressing alert.")
+            print(f"⚠️ [Alert Engine] Target #{monitor_id} missed a ping, but failure count ({consecutive_failures_count}/{threshold}) is below threshold. Suppressing alert.")
 
     else:
         if active_incident:
@@ -171,7 +178,8 @@ def execute_endpoint_ping(monitor_id: int, target_url: str):
 
     try:
         # Perform the actual HTTP validation probe
-        response = http_client_pool.get(target_url)
+        # Perform a HEAD request to minimize data transfer and bypass basic bot filters
+        response = http_client_pool.request("HEAD", target_url)
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         status_code = response.status_code
         
